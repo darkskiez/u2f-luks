@@ -122,7 +122,7 @@ func authorize(t *u2ftoken.Token, aks []AuthorisedKey) {
 			KeyHandle:   aks[keyIndex].KeyHandle,
 		}
 		res, err = t.Authenticate(req)
-		if err == u2ftoken.ErrPresenceRequired {
+		if err == u2ftoken.ErrUnknownKeyHandle || err == u2ftoken.ErrPresenceRequired {
 			time.Sleep(200 * time.Millisecond)
 			continue
 		} else if err != nil {
