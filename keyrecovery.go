@@ -79,6 +79,48 @@ func hashToInt(hash []byte, c elliptic.Curve) *big.Int {
 }
 
 func recoverPubkeys(curve elliptic.Curve, hash []byte, sigr, sigs *big.Int) {
+	if sigr.Sign() <= 0 {
+		fmt.Errorf("SigR must be postive")
+	}
+	if sigs.Sign() <= 0 {
+		fmt.Errorf("SigS must be postive")
+	}
+	fmt.Printf("r:%x\ns:%x\n", sigr, sigs)
+
+	n := curve.Params().N
+
+	x := new(big.Int).Mod(sigr, n)
+	rp, rn := PointsFromX2(curve.Params(), x)
+
+	fmt.Printf("Rp:%x\nRn:%x\n", rp, rn)
+	e := new(big.Int)
+	err := e.GobDecode(hash)
+	if err != nil {
+		fmt.Errorf("GobDecode failed")
+	}
+	//one := new(big.Int).SetInt64(1)
+
+	einv := new(big.Int)
+	einv.Sub(einv, e)
+	einv.Mod(einv, n)
+
+	rinv := new(big.Int).ModInverse(sigr, n)
+	fmt.Printf("rinv: %x\n", rinv)
+
+	basex, basey := curve.ScalarBaseMult(hash)
+	fmt.Printf("base: %x %x\n", basex, basey)
+	negbasey := new(big.Int).Neg(basey)
+
+	psrx, psry := curve.ScalarMult(sigr, rp, sigs.Bytes())
+	fmt.Printf("psr: %x %x\n", psrx, psry)
+
+	subx, suby := curve.Add(psrx, psry, basex, negbasey)
+	fmt.Printf("sub: %x %x\n", subx, suby)
+
+	px, py := curve.ScalarMult(subx, suby, rinv.Bytes())
+	fmt.Printf("p: %x %x\n", px, py)
+
+	//q :=  curve.
 	/*
 		   	Rp, Rn = curve.points_at_x(r % curve.Params().N)
 
@@ -90,44 +132,40 @@ func recoverPubkeys(curve elliptic.Curve, hash []byte, sigr, sigs *big.Int) {
 				       curve.point_sub(curve.point_mul(s, R), curve.base_mul(hash)))
 	*/
 
-	x := new(big.Int)
-	x.Mod(sigr, curve.Params().N)
-
-	y1, y2 = PointsFromX2(curve.Params(), x)
-
-	one := new(big.Int).SetInt64(1)
-	rinv := new(big.Int).Div(one, x)
-
 	//curve.Add(x1,y1,x2,y2)
-	xe, ye := curve.ScalarBaseMult(hashToInt(hash, curve))
-	xf, yf := curve.ScalarMult(x, y1, sigr)
+	//xe, ye := curve.ScalarBaseMult(hashToInt(hash, curve))
+	//xf, yf := curve.ScalarMult(x, y1, sigr)
 	//curve.Add(xf,yf,-xe,ye)
 
-	curve.ScalarMult(x, y1, rinv)
-
+	//curve.ScalarMult(x, y1, rinv)
 }
 
 func main() {
 	ec := elliptic.P256()
-	msg, _ := new(big.Int).SetString("e1130af6a38ccb412a9c8d13e15dbfc9e69a16385af3c3f1e5da954fd5e7c45fd75e2b8c36699228e92840c0562fbf3772f07e17f1add56588dd45f7450e1217ad239922dd9c32695dc71ff2424ca0dec1321aa47064a044b7fe3c2b97d03ce470a592304c5ef21eed9f93da56bb232d1eeb0035f9bf0dfafdcc4606272b20a3", 16)
-	sigr, _ := new(big.Int).SetString("bf96b99aa49c705c910be33142017c642ff540c76349b9dab72f981fd9347f4f", 16)
-	sigs, _ := new(big.Int).SetString("17c55095819089c2e03b9cd415abdf12444e323075d98f31920b9e0f57ec871c", 16)
+	msg := "hello world"
+	//k 52aa4c83ddbc0131f671d3d69a49c7995c558a5834d82f679bdd3fb338539a4d
+	//pub <point 0xb05e0deeee51b52956eff8034ffbc09a5331143114c1fb1c82705504f978370a, 0x2ee7efa2467fec9d0b8f7a860503919decb0bad76bc797bf482e95254e226fcc>
+	//hash  0xb94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9L
 
-	pubx, _ := new(big.Int).SetString("e424dc61d4bb3cb7ef4344a7f8957a0c5134e16f7a67c074f82e6e12f49abf3c", 16)
-	puby, _ := new(big.Int).SetString("970eed7aa2bc48651545949de1dddaf0127e5965ac85d1243d6f60e7dfaee927", 16)
+	sigr, _ := new(big.Int).SetString("350b1572ff1b72831383c1d7c15c5aba106d62af007551d22bd313f25b1dfba8", 16)
+	sigs, _ := new(big.Int).SetString("bf58baa28d760df87db5e069bd2dde2080d4dbd03cd76421bdcd1cc58c82ae69", 16)
+
+	pubx, _ := new(big.Int).SetString("b05e0deeee51b52956eff8034ffbc09a5331143114c1fb1c82705504f978370a", 16)
+	puby, _ := new(big.Int).SetString("2ee7efa2467fec9d0b8f7a860503919decb0bad76bc797bf482e95254e226fcc", 16)
 
 	pubkey := &ecdsa.PublicKey{Curve: ec, X: pubx, Y: puby}
 
-	sum := sha256.Sum256(msg.Bytes())
+	sum := sha256.Sum256([]byte(msg))
+	fmt.Printf("hash %x\n", sum[:])
 
 	ver := ecdsa.Verify(pubkey, sum[:], sigr, sigs)
-	fmt.Printf("%+v", ver)
+	fmt.Printf("%+v\n", ver)
 
-	y1, y2 := pointsAtX(ec.Params(), pubx)
-	fmt.Printf("puby:%+v\ny1:%+v\ny2:%+v", puby.Text(16), y1.Text(16), y2.Text(16))
+	y1, y2 := PointsFromX2(ec.Params(), pubx)
+	fmt.Printf("puby:%+v\ny1:%+v\ny2:%+v\n", puby.Text(16), y1.Text(16), y2.Text(16))
 
-	y1, y2 = PointsFromX2(ec.Params(), pubx)
-	fmt.Printf("puby:%+v\ny1:%+v\ny2:%+v", puby.Text(16), y1.Text(16), y2.Text(16))
+	recoverPubkeys(ec, sum[:], sigr, sigs)
+
 	/*
 		k, Q = ec.nistp256.generate_key()
 		print 'pub', Q
