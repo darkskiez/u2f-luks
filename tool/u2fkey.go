@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/asn1"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"flag"
@@ -70,7 +71,9 @@ func enroll(t *u2ftoken.Token) {
 	ksum := sha256.Sum256([]byte(pubKeyX))
 	log.Printf("KS %x", ksum)
 
-	fmt.Printf("-k %x -h %x\n", keyHandle, ksum)
+	fmt.Printf("-k %s -h %s\n",
+		base64.URLEncoding.EncodeToString(keyHandle),
+		base64.URLEncoding.EncodeToStrin(ksum))
 }
 
 func authorize(t *u2ftoken.Token) {
