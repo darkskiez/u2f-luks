@@ -1,11 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/asn1"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"flag"
@@ -13,6 +13,8 @@ import (
 	"io"
 	"log"
 	"math/big"
+	"os"
+	"strings"
 	"time"
 
 	"crypto/elliptic"
@@ -25,24 +27,34 @@ import (
 var u2f_app string
 var keyhandle string
 var keyhash string
+var tty bool
+var enrollkey bool
 
 // sha256 hash of app
 var app []byte
+
+type AuthorisedKey struct {
+	KeyHandle, PublicKeyHash []byte
+}
+
+var AuthorisedKeys []AuthorisedKey
 
 func init() {
 	flag.StringVar(&u2f_app, "app", "u2fkeystore://", "app id for u2f")
 	flag.StringVar(&keyhandle, "k", "", "key handle")
 	flag.StringVar(&keyhash, "h", "", "key hash")
+	flag.BoolVar(&tty, "tty", true, "Prompt for a password")
+	flag.BoolVar(&enrollkey, "enroll", false, "Enroll a key")
 }
 
-func enroll(t *u2ftoken.Token) {
+func enroll(t *u2ftoken.Token) (AuthorisedKey, []byte) {
 	challenge := make([]byte, 32)
 	io.ReadFull(rand.Reader, challenge)
 	app := sha256.Sum256([]byte(u2f_app))
 
 	var res []byte
 	var err error
-	log.Println("registering, provide user presence")
+	log.Println("Enrolling new key, provide user presence")
 	for {
 		res, err = t.Register(u2ftoken.RegisterRequest{Challenge: challenge, Application: app[:]})
 		if err == u2ftoken.ErrPresenceRequired {
@@ -71,36 +83,44 @@ func enroll(t *u2ftoken.Token) {
 	ksum := sha256.Sum256([]byte(pubKeyX))
 	log.Printf("KS %x", ksum)
 
-	fmt.Printf("-k %s -h %s\n",
-		base64.URLEncoding.EncodeToString(keyHandle),
-		base64.URLEncoding.EncodeToStrin(ksum))
+	ak := AuthorisedKey{
+		KeyHandle:     keyHandle,
+		PublicKeyHash: ksum[:],
+	}
+	return ak, pubKeyY
 }
 
-func authorize(t *u2ftoken.Token) {
+func authorize(t *u2ftoken.Token, aks []AuthorisedKey) {
 	challenge := make([]byte, 32)
 	io.ReadFull(rand.Reader, challenge)
 	app := sha256.Sum256([]byte(u2f_app))
 
-	kh, err := hex.DecodeString(keyhandle)
-	if err != nil {
-		log.Fatal("Failed to decode keyhandle flag %v", err)
-	}
+	/*
+		for i, ak := range aks {
+			req := u2ftoken.AuthenticateRequest{
+				Challenge:   challenge,
+				Application: app[:],
+				KeyHandle:   kh,
+			}
+			if err := t.CheckAuthenticate(req); err == nil {
+				break
+			}
+		}
+	*/
 
-	req := u2ftoken.AuthenticateRequest{
-		Challenge:   challenge,
-		Application: app[:],
-		KeyHandle:   kh,
-	}
-	if err := t.CheckAuthenticate(req); err != nil {
-		log.Fatal(err)
-	}
+	log.Println("Authenticating Key, provide user presence")
 
-	io.ReadFull(rand.Reader, challenge)
-	log.Println("authenticating, provide user presence")
-
+	var err error
 	var res *u2ftoken.AuthenticateResponse
-
+	keyIndex := -1
 	for {
+		keyIndex = (keyIndex + 1) % len(aks)
+		io.ReadFull(rand.Reader, challenge)
+		req := u2ftoken.AuthenticateRequest{
+			Challenge:   challenge,
+			Application: app[:],
+			KeyHandle:   aks[keyIndex].KeyHandle,
+		}
 		res, err = t.Authenticate(req)
 		if err == u2ftoken.ErrPresenceRequired {
 			time.Sleep(200 * time.Millisecond)
@@ -131,28 +151,92 @@ func authorize(t *u2ftoken.Token) {
 	sum := sha256.Sum256([]byte(data))
 
 	keys := eckr.RecoverPublicKeys(curve, sum[:], sig.R, sig.S)
-
-	ksum, err := hex.DecodeString(keyhash)
-	if err != nil {
-		log.Fatal("Could not hex decode key keyhash: %v", err)
-	}
-	if len(ksum) != 32 {
-		log.Fatal("keyhash has wrong length %v != 32", len(ksum))
-	}
-
 	for i := 0; i < 2; i++ {
 		dksum := sha256.Sum256([]byte(keys[i].X.Bytes()))
-		if bytes.Equal(dksum[:], ksum[:]) {
+		if bytes.Equal(dksum[:], aks[keyIndex].PublicKeyHash) {
 			log.Printf("K:%x %x", keys[i].X, keys[i].Y)
-			fmt.Printf("%x%x\n", keys[i].X, keys[i].Y)
+			fmt.Printf("%x\n", keys[i].Y)
 			break
 		}
 	}
 
 }
 
+func loadKeyfile(filename string) ([]AuthorisedKey, error) {
+	aks := make([]AuthorisedKey, 0, 10)
+
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	i := 0
+	for scanner.Scan() {
+		i++
+		parts := strings.Split(scanner.Text(), " ")
+		if len(parts) < 2 {
+			log.Printf("failed to parse (line %v)", err, i)
+			continue
+		}
+		kh, err := hex.DecodeString(parts[0])
+		if err != nil {
+			log.Printf("failed to decode keyhandle %v (line %v)", err, i)
+			continue
+		}
+		pkh, err := hex.DecodeString(parts[1])
+		if err != nil {
+			log.Printf("failed to decode keyhash %v (line %v)", err, i)
+			continue
+		}
+		if len(pkh) != 32 {
+			log.Fatal("keyhash has wrong length %v (expected: 32) (line %v)", len(pkh), i)
+			continue
+		}
+
+		aks = append(aks, AuthorisedKey{
+			KeyHandle:     kh,
+			PublicKeyHash: pkh,
+		})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return aks, nil
+}
+
+func appendKeyfile(filename string, a AuthorisedKey) error {
+	w, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+	_, err = fmt.Fprintf(w, "%x %x\n", a.KeyHandle, a.PublicKeyHash)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func main() {
 	flag.Parse()
+	if flag.NArg() > 1 {
+		log.Fatal("Only one keyfile may be supplied as an argument")
+	}
+
+	var keyFile string
+	if flag.NArg() == 1 {
+		keyFile = flag.Arg(0)
+		log.Printf("Using keyfile: %v", keyFile)
+		var err error
+		AuthorisedKeys, err = loadKeyfile(keyFile)
+		if err != nil {
+			log.Printf("Error loading tokens: %v", err)
+		}
+		log.Printf("Loaded %d tokens", len(AuthorisedKeys))
+	}
 
 	devices, err := u2fhid.Devices()
 	if err != nil {
@@ -177,10 +261,20 @@ func main() {
 	}
 	log.Println("version:", version)
 
-	if keyhandle == "" {
-		enroll(t)
+	if enrollkey {
+		ak, key := enroll(t)
+		log.Println("kf1")
+		if keyFile != "" {
+			log.Println("kf2")
+			if err := appendKeyfile(keyFile, ak); err != nil {
+				log.Fatal(err)
+			}
+		}
+		fmt.Printf("%x", key)
+	} else if len(AuthorisedKeys) > 0 {
+		authorize(t, AuthorisedKeys)
 	} else {
-		authorize(t)
+		log.Printf("No keys to authenticate and enroll flag not set")
 	}
 
 }
