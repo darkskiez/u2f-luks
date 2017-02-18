@@ -32,9 +32,17 @@ func NewClient(url string) Client {
 
 type KeyHandle []byte
 
+type KeyHandler interface {
+	KeyHandle() KeyHandle
+}
+
 type SignedKeyHandle struct {
-	KeyHandle
+	kh        KeyHandle
 	PublicKey ECPublicKey
+}
+
+func (skh SignedKeyHandle) KeyHandle() KeyHandle {
+	return skh.kh
 }
 
 type RegisterResponse struct {
@@ -45,12 +53,14 @@ type RegisterResponse struct {
 }
 
 func (r RegisterResponse) SignedKeyHandle() SignedKeyHandle {
-	return SignedKeyHandle{KeyHandle: r.KeyHandle, PublicKey: r.PublicKey}
+	return SignedKeyHandle{kh: r.KeyHandle, PublicKey: r.PublicKey}
 }
 
 type AuthenticateResponse struct {
-	KeyHandle
 	u2ftoken.AuthenticateResponse
+	KeyHandle
+	KeyHandleIndex      int
+	AuthenticateRequest u2ftoken.AuthenticateRequest
 }
 
 type Winker interface {
@@ -191,7 +201,7 @@ func (u Client) Register(ctx context.Context) (*RegisterResponse, error) {
 
 }
 
-func (u Client) Authenticate(ctx context.Context, keyhandles []KeyHandle) (*AuthenticateResponse, error) {
+func (u Client) Authenticate(ctx context.Context, keyhandlers []KeyHandler) (*AuthenticateResponse, error) {
 	u2fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -202,11 +212,11 @@ func (u Client) Authenticate(ctx context.Context, keyhandles []KeyHandle) (*Auth
 	c := make(chan AuthenticateResponse, 1)
 	for {
 		go func() {
-			for i := range keyhandles {
+			for i := range keyhandlers {
 				req := u2ftoken.AuthenticateRequest{
 					Challenge:   challenge,
 					Application: u.FacetID[:],
-					KeyHandle:   keyhandles[i],
+					KeyHandle:   keyhandlers[i].KeyHandle(),
 				}
 				for _, t := range Tokens() {
 					res, err := t.Authenticate(req)
@@ -218,7 +228,12 @@ func (u Client) Authenticate(ctx context.Context, keyhandles []KeyHandle) (*Auth
 					} else if err != nil {
 						log.Print(err)
 					} else {
-						c <- AuthenticateResponse{AuthenticateResponse: *res, KeyHandle: keyhandles[i]}
+						c <- AuthenticateResponse{
+							AuthenticateRequest:  req,
+							AuthenticateResponse: *res,
+							KeyHandle:            keyhandlers[i].KeyHandle(),
+							KeyHandleIndex:       i,
+						}
 					}
 				}
 			}

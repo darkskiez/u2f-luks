@@ -17,7 +17,7 @@ func main() {
 	fmt.Println("Commands: (r)egister / (a)uthenticate")
 	reader := bufio.NewReader(os.Stdin)
 
-	khs := make([]u2fapp.KeyHandle, 0)
+	khs := make([]u2fapp.KeyHandler, 0)
 
 	for {
 		char, _, err := reader.ReadRune()
@@ -32,7 +32,7 @@ func main() {
 			if err != nil {
 				fmt.Printf("Err: %+v\n", err)
 			} else {
-				khs = append(khs, resp.KeyHandle)
+				khs = append(khs, resp.SignedKeyHandle())
 				fmt.Printf("%+v\n", resp)
 				fmt.Printf("Added Token %v\n", len(khs))
 			}
@@ -43,7 +43,7 @@ func main() {
 			if err != nil {
 				fmt.Printf("Err: %+v\n", err)
 			} else {
-				fmt.Printf("A: %+v\n", aresp)
+				fmt.Printf("A: %#v\n", aresp)
 			}
 		}
 	}

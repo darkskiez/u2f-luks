@@ -3,28 +3,25 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"crypto/rand"
+	"context"
 	"crypto/sha256"
 	"encoding/asn1"
 	"encoding/binary"
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"math/big"
 	"os"
 	"strings"
-	"time"
 
 	"crypto/elliptic"
 
 	"github.com/darkskiez/u2f-luks/eckr"
-	"github.com/flynn/u2f/u2fhid"
-	"github.com/flynn/u2f/u2ftoken"
+	"github.com/darkskiez/u2f-luks/u2fapp"
 )
 
-var u2f_app string
+var u2f_facet string
 var keyhandle string
 var keyhash string
 var tty bool
@@ -34,102 +31,59 @@ var enrollkey bool
 var app []byte
 
 type AuthorisedKey struct {
-	KeyHandle, PublicKeyHash []byte
+	keyHandle, publicKeyHash []byte
+}
+
+// KeyHandler interface
+func (a AuthorisedKey) KeyHandle() u2fapp.KeyHandle {
+	return a.keyHandle
 }
 
 var AuthorisedKeys []AuthorisedKey
 
 func init() {
-	flag.StringVar(&u2f_app, "app", "u2fkeystore://", "app id for u2f")
+	flag.StringVar(&u2f_facet, "app", "u2fkeystore://", "app id for u2f")
 	flag.StringVar(&keyhandle, "k", "", "key handle")
 	flag.StringVar(&keyhash, "h", "", "key hash")
 	flag.BoolVar(&tty, "tty", true, "Prompt for a password")
 	flag.BoolVar(&enrollkey, "enroll", false, "Enroll a key")
 }
 
-func enroll(t *u2ftoken.Token) (AuthorisedKey, []byte) {
-	challenge := make([]byte, 32)
-	io.ReadFull(rand.Reader, challenge)
-	app := sha256.Sum256([]byte(u2f_app))
-
-	var res []byte
-	var err error
+func enroll(ctx context.Context, app u2fapp.Client) (*AuthorisedKey, []byte, error) {
 	log.Println("Enrolling new key, provide user presence")
-	for {
-		res, err = t.Register(u2ftoken.RegisterRequest{Challenge: challenge, Application: app[:]})
-		if err == u2ftoken.ErrPresenceRequired {
-			time.Sleep(200 * time.Millisecond)
-			continue
-		} else if err != nil {
-			log.Fatal(err)
-		}
-		break
+	res, err := app.Register(ctx)
+
+	if err != nil {
+		return nil, nil, err
 	}
 
-	//log.Printf("registered: %x", res)
-	// CHECk RSVD 0x05
-	// CHECK PUBKEY TYPE 0x04
-	pubKeyX := res[2:34]
-	pubKeyY := res[34:66]
+	pubKeyX := res.PublicKey[1:33]
+	pubKeyY := res.PublicKey[33:65]
 
-	res = res[66:]
-	khLen := int(res[0])
-	res = res[1:]
-	keyHandle := res[:khLen]
 	log.Printf("K  %x %x", pubKeyX, pubKeyY)
-	log.Printf("KH %x", keyHandle)
+	log.Printf("KH %x", res.KeyHandle)
 
 	// smaller hash output or both keyparts?
 	ksum := sha256.Sum256([]byte(pubKeyX))
 	log.Printf("KS %x", ksum)
 
-	ak := AuthorisedKey{
-		KeyHandle:     keyHandle,
-		PublicKeyHash: ksum[:],
+	ak := &AuthorisedKey{
+		keyHandle:     res.KeyHandle,
+		publicKeyHash: ksum[:],
 	}
-	return ak, pubKeyY
+	return ak, pubKeyY, nil
 }
 
-func authorize(t *u2ftoken.Token, aks []AuthorisedKey) {
-	challenge := make([]byte, 32)
-	io.ReadFull(rand.Reader, challenge)
-	app := sha256.Sum256([]byte(u2f_app))
-
-	/*
-		for i, ak := range aks {
-			req := u2ftoken.AuthenticateRequest{
-				Challenge:   challenge,
-				Application: app[:],
-				KeyHandle:   kh,
-			}
-			if err := t.CheckAuthenticate(req); err == nil {
-				break
-			}
-		}
-	*/
-
+func authorize(ctx context.Context, app u2fapp.Client, aks []AuthorisedKey) {
 	log.Println("Authenticating Key, provide user presence")
 
-	var err error
-	var res *u2ftoken.AuthenticateResponse
-	keyIndex := -1
-	for {
-		keyIndex = (keyIndex + 1) % len(aks)
-		io.ReadFull(rand.Reader, challenge)
-		req := u2ftoken.AuthenticateRequest{
-			Challenge:   challenge,
-			Application: app[:],
-			KeyHandle:   aks[keyIndex].KeyHandle,
-		}
-		res, err = t.Authenticate(req)
-		if err == u2ftoken.ErrUnknownKeyHandle || err == u2ftoken.ErrPresenceRequired {
-			time.Sleep(200 * time.Millisecond)
-			continue
-		} else if err != nil {
-			log.Fatal(err)
-		}
-		break
+	// slices of interfaces need converted :(
+	khs := make([]u2fapp.KeyHandler, len(aks))
+	for i, v := range aks {
+		khs[i] = v
 	}
+
+	res, err := app.Authenticate(ctx, khs)
 
 	//log.Printf("counter = %d, signature = %x", res.Counter, res.Signature)
 	curve := elliptic.P256()
@@ -144,16 +98,16 @@ func authorize(t *u2ftoken.Token, aks []AuthorisedKey) {
 	}
 
 	data := make([]byte, 69)
-	copy(data[:32], app[:])
+	copy(data[:32], app.FacetID[:])
 	data[32] = 0x01
 	binary.BigEndian.PutUint32(data[33:37], res.Counter)
-	copy(data[37:], challenge)
+	copy(data[37:], res.AuthenticateRequest.Challenge)
 	sum := sha256.Sum256([]byte(data))
 
 	keys := eckr.RecoverPublicKeys(curve, sum[:], sig.R, sig.S)
 	for i := 0; i < 2; i++ {
 		dksum := sha256.Sum256([]byte(keys[i].X.Bytes()))
-		if bytes.Equal(dksum[:], aks[keyIndex].PublicKeyHash) {
+		if bytes.Equal(dksum[:], aks[res.KeyHandleIndex].publicKeyHash) {
 			log.Printf("K:%x %x", keys[i].X, keys[i].Y)
 			fmt.Printf("%x\n", keys[i].Y)
 			break
@@ -196,8 +150,8 @@ func loadKeyfile(filename string) ([]AuthorisedKey, error) {
 		}
 
 		aks = append(aks, AuthorisedKey{
-			KeyHandle:     kh,
-			PublicKeyHash: pkh,
+			keyHandle:     kh,
+			publicKeyHash: pkh,
 		})
 	}
 	if err := scanner.Err(); err != nil {
@@ -213,7 +167,7 @@ func appendKeyfile(filename string, a AuthorisedKey) error {
 		return err
 	}
 	defer w.Close()
-	_, err = fmt.Fprintf(w, "%x %x\n", a.KeyHandle, a.PublicKeyHash)
+	_, err = fmt.Fprintf(w, "%x %x\n", a.keyHandle, a.publicKeyHash)
 	if err != nil {
 		return err
 	}
@@ -238,41 +192,21 @@ func main() {
 		log.Printf("Loaded %d tokens", len(AuthorisedKeys))
 	}
 
-	devices, err := u2fhid.Devices()
-	if err != nil {
-		log.Fatal(err)
-	}
-	if len(devices) == 0 {
-		log.Fatal("no U2F tokens found")
-	}
-
-	d := devices[0]
-	log.Printf("manufacturer = %q, product = %q, vid = 0x%04x, pid = 0x%04x", d.Manufacturer, d.Product, d.ProductID, d.VendorID)
-
-	dev, err := u2fhid.Open(d)
-	if err != nil {
-		log.Fatal(err)
-	}
-	t := u2ftoken.NewToken(dev)
-
-	version, err := t.Version()
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Println("version:", version)
+	ctx := context.Background()
+	app := u2fapp.NewClient(u2f_facet)
 
 	if enrollkey {
-		ak, key := enroll(t)
-		log.Println("kf1")
+		ak, _, err := enroll(ctx, app)
+		if err != nil {
+			log.Fatal(err)
+		}
 		if keyFile != "" {
-			log.Println("kf2")
-			if err := appendKeyfile(keyFile, ak); err != nil {
+			if err := appendKeyfile(keyFile, *ak); err != nil {
 				log.Fatal(err)
 			}
 		}
-		fmt.Printf("%x", key)
 	} else if len(AuthorisedKeys) > 0 {
-		authorize(t, AuthorisedKeys)
+		authorize(ctx, app, AuthorisedKeys)
 	} else {
 		log.Printf("No keys to authenticate and enroll flag not set")
 	}
