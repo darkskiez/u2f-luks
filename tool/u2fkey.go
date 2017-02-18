@@ -8,12 +8,17 @@ import (
 	"encoding/asn1"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math/big"
 	"os"
+	"os/signal"
 	"strings"
+
+	"golang.org/x/crypto/ssh/terminal"
 
 	"crypto/elliptic"
 
@@ -24,8 +29,10 @@ import (
 var u2f_facet string
 var keyhandle string
 var keyhash string
+var keyfile string
 var tty bool
 var enrollkey bool
+var verbose bool
 
 // sha256 hash of app
 var app []byte
@@ -43,8 +50,10 @@ var AuthorisedKeys []AuthorisedKey
 
 func init() {
 	flag.StringVar(&u2f_facet, "app", "u2fkeystore://", "app id for u2f")
+	flag.StringVar(&keyfile, "keyfile", "/etc/u2f-luks.keys", "keyfile")
 	flag.StringVar(&keyhandle, "k", "", "key handle")
 	flag.StringVar(&keyhash, "h", "", "key hash")
+	flag.BoolVar(&verbose, "v", false, "Verbose logging")
 	flag.BoolVar(&tty, "tty", true, "Prompt for a password")
 	flag.BoolVar(&enrollkey, "enroll", false, "Enroll a key")
 }
@@ -60,12 +69,12 @@ func enroll(ctx context.Context, app u2fapp.Client) (*AuthorisedKey, []byte, err
 	pubKeyX := res.PublicKey[1:33]
 	pubKeyY := res.PublicKey[33:65]
 
-	log.Printf("K  %x %x", pubKeyX, pubKeyY)
-	log.Printf("KH %x", res.KeyHandle)
+	//log.Printf("K  %x %x", pubKeyX, pubKeyY)
+	//log.Printf("KH %x", res.KeyHandle)
 
 	// smaller hash output or both keyparts?
 	ksum := sha256.Sum256([]byte(pubKeyX))
-	log.Printf("KS %x", ksum)
+	//log.Printf("KS %x", ksum)
 
 	ak := &AuthorisedKey{
 		keyHandle:     res.KeyHandle,
@@ -74,9 +83,7 @@ func enroll(ctx context.Context, app u2fapp.Client) (*AuthorisedKey, []byte, err
 	return ak, pubKeyY, nil
 }
 
-func authorize(ctx context.Context, app u2fapp.Client, aks []AuthorisedKey) {
-	log.Println("Authenticating Key, provide user presence")
-
+func authorize(ctx context.Context, app u2fapp.Client, aks []AuthorisedKey) (string, error) {
 	// slices of interfaces need converted :(
 	khs := make([]u2fapp.KeyHandler, len(aks))
 	for i, v := range aks {
@@ -85,16 +92,14 @@ func authorize(ctx context.Context, app u2fapp.Client, aks []AuthorisedKey) {
 
 	res, err := app.Authenticate(ctx, khs)
 
-	//log.Printf("counter = %d, signature = %x", res.Counter, res.Signature)
 	curve := elliptic.P256()
 	sig := struct {
 		R *big.Int
 		S *big.Int
 	}{}
 	_, err = asn1.Unmarshal(res.Signature, &sig)
-	//log.Printf("Sig: %+v", sig)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 
 	data := make([]byte, 69)
@@ -108,12 +113,18 @@ func authorize(ctx context.Context, app u2fapp.Client, aks []AuthorisedKey) {
 	for i := 0; i < 2; i++ {
 		dksum := sha256.Sum256([]byte(keys[i].X.Bytes()))
 		if bytes.Equal(dksum[:], aks[res.KeyHandleIndex].publicKeyHash) {
-			log.Printf("K:%x %x", keys[i].X, keys[i].Y)
-			fmt.Printf("%x\n", keys[i].Y)
-			break
+			//log.Printf("K:%x %x", keys[i].X, keys[i].Y)
+			return fmt.Sprintf("%x", keys[i].Y), nil
 		}
 	}
 
+	return "", errors.New("Did not match any keys")
+}
+
+func promptPassword() (string, error) {
+	fmt.Fprintf(os.Stderr, "Touch token or enter password:")
+	password, err := terminal.ReadPassword(0)
+	return string(password), err
 }
 
 func loadKeyfile(filename string) ([]AuthorisedKey, error) {
@@ -180,12 +191,19 @@ func main() {
 		log.Fatal("Only one keyfile may be supplied as an argument")
 	}
 
-	var keyFile string
-	if flag.NArg() == 1 {
-		keyFile = flag.Arg(0)
-		log.Printf("Using keyfile: %v", keyFile)
+	if !verbose {
+		log.SetFlags(0)
+		log.SetOutput(ioutil.Discard)
+	}
+
+	if flag.NArg() == 1 && flag.Arg(0) != "" {
+		keyfile = flag.Arg(0)
+	}
+
+	if keyfile != "" {
+		log.Printf("Using keyfile: %v", keyfile)
 		var err error
-		AuthorisedKeys, err = loadKeyfile(keyFile)
+		AuthorisedKeys, err = loadKeyfile(keyfile)
 		if err != nil {
 			log.Printf("Error loading tokens: %v", err)
 		}
@@ -200,15 +218,42 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		if keyFile != "" {
-			if err := appendKeyfile(keyFile, *ak); err != nil {
+		if keyfile != "" {
+			if err := appendKeyfile(keyfile, *ak); err != nil {
 				log.Fatal(err)
 			}
 		}
-	} else if len(AuthorisedKeys) > 0 {
-		authorize(ctx, app, AuthorisedKeys)
+	} else if len(AuthorisedKeys) == 0 && !tty {
+		log.Fatalf("No keys to authenticate, prompt disabled, please enroll some keys")
 	} else {
-		log.Printf("No keys to authenticate and enroll flag not set")
+		c := make(chan string)
+		if len(AuthorisedKeys) > 0 {
+			go func() {
+				pwd, _ := authorize(ctx, app, AuthorisedKeys)
+				c <- pwd
+			}()
+		}
+		if tty {
+			oldState, err := terminal.GetState(0)
+			if err != nil {
+				log.Fatal("Could not get state of terminal: " + err.Error())
+			}
+			defer terminal.Restore(0, oldState)
+
+			sigch := make(chan os.Signal, 1)
+			signal.Notify(sigch, os.Interrupt)
+			go func() {
+				for _ = range sigch {
+					terminal.Restore(0, oldState)
+					os.Exit(1)
+				}
+			}()
+			go func() {
+				pwd, _ := promptPassword()
+				c <- pwd
+			}()
+		}
+		fmt.Print(<-c)
 	}
 
 }

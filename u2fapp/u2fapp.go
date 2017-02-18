@@ -191,7 +191,7 @@ func (u Client) Register(ctx context.Context) (*RegisterResponse, error) {
 		}()
 		select {
 		case <-u2fctx.Done():
-			return nil, nil // Context Closed error?
+			return nil, errors.New("Request Timed Out")
 		case res := <-c:
 			return &res, nil
 		case <-time.After(200 * time.Millisecond):
@@ -240,7 +240,7 @@ func (u Client) Authenticate(ctx context.Context, keyhandlers []KeyHandler) (*Au
 		}()
 		select {
 		case <-u2fctx.Done():
-			return nil, nil // Context Closed error?
+			return nil, errors.New("Request Timed Out") // Context Closed error?
 		case res := <-c:
 			return &res, nil
 		case <-time.After(200 * time.Millisecond):
