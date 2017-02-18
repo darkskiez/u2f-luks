@@ -16,11 +16,11 @@ import (
 )
 
 type Client struct {
-	ApplicationID [32]byte
+	FacetID [32]byte
 }
 
 func NewClient(url string) Client {
-	return Client{ApplicationID: sha256.Sum256([]byte(url))}
+	return Client{FacetID: sha256.Sum256([]byte(url))}
 }
 
 type KeyHandle []byte
@@ -126,7 +126,7 @@ func (u Client) Register(ctx context.Context) (*RegisterResponse, error) {
 
 	challenge := make([]byte, 32)
 	io.ReadFull(rand.Reader, challenge)
-	req := u2ftoken.RegisterRequest{Challenge: challenge, Application: u.ApplicationID[:]}
+	req := u2ftoken.RegisterRequest{Challenge: challenge, Application: u.FacetID[:]}
 
 	c := make(chan RegisterResponse, 1)
 	for {
@@ -170,7 +170,7 @@ func (u Client) Authenticate(ctx context.Context, keyhandles []KeyHandle) (*Auth
 			for i := range keyhandles {
 				req := u2ftoken.AuthenticateRequest{
 					Challenge:   challenge,
-					Application: u.ApplicationID[:],
+					Application: u.FacetID[:],
 					KeyHandle:   keyhandles[i],
 				}
 				for _, t := range Tokens() {
