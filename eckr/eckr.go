@@ -5,26 +5,24 @@ package eckr
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"fmt"
+	"errors"
 	"math/big"
 )
 
 func modSqrt(z *big.Int, curve *elliptic.CurveParams, a *big.Int) *big.Int {
-	p1 := big.NewInt(1)
-	p1.Add(p1, curve.P)
+	p := big.NewInt(1)
+	p.Add(p, curve.P)
 
-	result := big.NewInt(1)
+	r := big.NewInt(1)
 
-	for i := p1.BitLen() - 1; i > 1; i-- {
-		result.Mul(result, result)
-		result.Mod(result, curve.P)
-		if p1.Bit(i) > 0 {
-			result.Mul(result, a)
-			result.Mod(result, curve.P)
+	for i := p.BitLen() - 1; i > 1; i-- {
+		r.Mul(r, r).Mod(r, curve.P)
+		if p.Bit(i) > 0 {
+			r.Mul(r, a).Mod(r, curve.P)
 		}
 	}
 
-	z.Set(result)
+	z.Set(r)
 	return z
 }
 
@@ -34,20 +32,16 @@ func PointsFromX(curve *elliptic.CurveParams, x *big.Int) (y, yn *big.Int) {
 	yn = new(big.Int)
 
 	/* y = x^2 */
-	y.Mul(x, x)
-	y.Mod(y, curve.P)
+	y.Mul(x, x).Mod(y, curve.P)
 
 	/* y = x^2 - 3 */
-	y.Sub(y, big.NewInt(3))
-	y.Mod(y, curve.P)
+	y.Sub(y, big.NewInt(3)).Mod(y, curve.P)
 
 	/* y = x^3 - 3x */
-	y.Mul(y, x)
-	y.Mod(y, curve.P)
+	y.Mul(y, x).Mod(y, curve.P)
 
 	/* y = x^3 - 3x + b */
-	y.Add(y, curve.B)
-	y.Mod(y, curve.P)
+	y.Add(y, curve.B).Mod(y, curve.P)
 
 	modSqrt(y, curve, y)
 
@@ -56,23 +50,17 @@ func PointsFromX(curve *elliptic.CurveParams, x *big.Int) (y, yn *big.Int) {
 	return y, yn
 }
 
-func RecoverPublicKeys(curve elliptic.Curve, hash []byte, r, s *big.Int) []ecdsa.PublicKey {
+func RecoverPublicKeys(curve elliptic.Curve, hash []byte, r, s *big.Int) ([]ecdsa.PublicKey, error) {
 	if r.Sign() <= 0 {
-		fmt.Errorf("Signature r must be postive")
+		return nil, errors.New("Signature r must be postive")
 	}
 	if s.Sign() <= 0 {
-		fmt.Errorf("Signature s must be postive")
+		return nil, errors.New("Signature s must be postive")
 	}
 
 	n := curve.Params().N
 	x := new(big.Int).Mod(r, n)
 	rp, rn := PointsFromX(curve.Params(), x)
-
-	e := new(big.Int)
-	err := e.GobDecode(hash)
-	if err != nil {
-		fmt.Errorf("GobDecode failed")
-	}
 
 	rinv := new(big.Int).ModInverse(r, n)
 
@@ -87,5 +75,5 @@ func RecoverPublicKeys(curve elliptic.Curve, hash []byte, r, s *big.Int) []ecdsa
 		px, py := curve.ScalarMult(subx, suby, rinv.Bytes())
 		keys[i] = ecdsa.PublicKey{Curve: curve, X: px, Y: py}
 	}
-	return keys[:]
+	return keys[:], nil
 }

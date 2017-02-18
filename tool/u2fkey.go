@@ -26,16 +26,13 @@ import (
 	"github.com/darkskiez/u2f-luks/u2fapp"
 )
 
-var u2f_facet string
+var u2fFacet string
 var keyhandle string
 var keyhash string
 var keyfile string
 var tty bool
 var enrollkey bool
 var verbose bool
-
-// sha256 hash of app
-var app []byte
 
 type AuthorisedKey struct {
 	keyHandle, publicKeyHash []byte
@@ -46,10 +43,20 @@ func (a AuthorisedKey) KeyHandle() u2fapp.KeyHandle {
 	return a.keyHandle
 }
 
-var AuthorisedKeys []AuthorisedKey
+type AuthorisedKeys []AuthorisedKey
+
+func (aks AuthorisedKeys) KeyHandlers() []u2fapp.KeyHandler {
+	khs := make([]u2fapp.KeyHandler, len(aks))
+	for i, v := range aks {
+		khs[i] = v
+	}
+	return khs
+}
+
+var SavedAuthorisedKeys AuthorisedKeys
 
 func init() {
-	flag.StringVar(&u2f_facet, "app", "u2fkeystore://", "app id for u2f")
+	flag.StringVar(&u2fFacet, "app", "u2fkeystore://", "app id for u2f")
 	flag.StringVar(&keyfile, "keyfile", "/etc/u2f-luks.keys", "keyfile")
 	flag.StringVar(&keyhandle, "k", "", "key handle")
 	flag.StringVar(&keyhash, "h", "", "key hash")
@@ -73,7 +80,7 @@ func enroll(ctx context.Context, app u2fapp.Client) (*AuthorisedKey, []byte, err
 	//log.Printf("KH %x", res.KeyHandle)
 
 	// smaller hash output or both keyparts?
-	ksum := sha256.Sum256([]byte(pubKeyX))
+	ksum := sha256.Sum256(pubKeyX)
 	//log.Printf("KS %x", ksum)
 
 	ak := &AuthorisedKey{
@@ -83,15 +90,13 @@ func enroll(ctx context.Context, app u2fapp.Client) (*AuthorisedKey, []byte, err
 	return ak, pubKeyY, nil
 }
 
-func authorize(ctx context.Context, app u2fapp.Client, aks []AuthorisedKey) (string, error) {
-	// slices of interfaces need converted :(
-	khs := make([]u2fapp.KeyHandler, len(aks))
-	for i, v := range aks {
-		khs[i] = v
+func authorize(ctx context.Context, app u2fapp.Client, aks AuthorisedKeys) (string, error) {
+	res, err := app.Authenticate(ctx, aks.KeyHandlers())
+	if err != nil {
+		return "", err
 	}
 
-	res, err := app.Authenticate(ctx, khs)
-
+	// TODO: move this into u2fapp
 	curve := elliptic.P256()
 	sig := struct {
 		R *big.Int
@@ -107,11 +112,15 @@ func authorize(ctx context.Context, app u2fapp.Client, aks []AuthorisedKey) (str
 	data[32] = 0x01
 	binary.BigEndian.PutUint32(data[33:37], res.Counter)
 	copy(data[37:], res.AuthenticateRequest.Challenge)
-	sum := sha256.Sum256([]byte(data))
+	sum := sha256.Sum256(data)
 
-	keys := eckr.RecoverPublicKeys(curve, sum[:], sig.R, sig.S)
+	keys, err := eckr.RecoverPublicKeys(curve, sum[:], sig.R, sig.S)
+	if err != nil {
+		return "", err
+	}
+
 	for i := 0; i < 2; i++ {
-		dksum := sha256.Sum256([]byte(keys[i].X.Bytes()))
+		dksum := sha256.Sum256(keys[i].X.Bytes())
 		if bytes.Equal(dksum[:], aks[res.KeyHandleIndex].publicKeyHash) {
 			//log.Printf("K:%x %x", keys[i].X, keys[i].Y)
 			return fmt.Sprintf("%x", keys[i].Y), nil
@@ -127,7 +136,7 @@ func promptPassword() (string, error) {
 	return string(password), err
 }
 
-func loadKeyfile(filename string) ([]AuthorisedKey, error) {
+func loadKeyfile(filename string) (AuthorisedKeys, error) {
 	aks := make([]AuthorisedKey, 0, 10)
 
 	file, err := os.Open(filename)
@@ -142,7 +151,7 @@ func loadKeyfile(filename string) ([]AuthorisedKey, error) {
 		i++
 		parts := strings.Split(scanner.Text(), " ")
 		if len(parts) < 2 {
-			log.Printf("failed to parse (line %v)", err, i)
+			log.Printf("failed to parse: %v (line %v)", err, i)
 			continue
 		}
 		kh, err := hex.DecodeString(parts[0])
@@ -156,7 +165,7 @@ func loadKeyfile(filename string) ([]AuthorisedKey, error) {
 			continue
 		}
 		if len(pkh) != 32 {
-			log.Fatal("keyhash has wrong length %v (expected: 32) (line %v)", len(pkh), i)
+			log.Fatalf("keyhash has wrong length %v (expected: 32) (line %v)", len(pkh), i)
 			continue
 		}
 
@@ -179,10 +188,7 @@ func appendKeyfile(filename string, a AuthorisedKey) error {
 	}
 	defer w.Close()
 	_, err = fmt.Fprintf(w, "%x %x\n", a.keyHandle, a.publicKeyHash)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 func main() {
@@ -203,15 +209,15 @@ func main() {
 	if keyfile != "" {
 		log.Printf("Using keyfile: %v", keyfile)
 		var err error
-		AuthorisedKeys, err = loadKeyfile(keyfile)
+		SavedAuthorisedKeys, err = loadKeyfile(keyfile)
 		if err != nil {
 			log.Printf("Error loading tokens: %v", err)
 		}
-		log.Printf("Loaded %d tokens", len(AuthorisedKeys))
+		log.Printf("Loaded %d tokens", len(SavedAuthorisedKeys))
 	}
 
 	ctx := context.Background()
-	app := u2fapp.NewClient(u2f_facet)
+	app := u2fapp.NewClient(u2fFacet)
 
 	if enrollkey {
 		ak, _, err := enroll(ctx, app)
@@ -223,14 +229,18 @@ func main() {
 				log.Fatal(err)
 			}
 		}
-	} else if len(AuthorisedKeys) == 0 && !tty {
+	} else if len(SavedAuthorisedKeys) == 0 && !tty {
 		log.Fatalf("No keys to authenticate, prompt disabled, please enroll some keys")
 	} else {
 		c := make(chan string)
-		if len(AuthorisedKeys) > 0 {
+		if len(SavedAuthorisedKeys) > 0 {
 			go func() {
-				pwd, _ := authorize(ctx, app, AuthorisedKeys)
-				c <- pwd
+				pwd, err := authorize(ctx, app, SavedAuthorisedKeys)
+				if err != nil {
+					log.Printf("Authorise failed: %v", err)
+				} else {
+					c <- pwd
+				}
 			}()
 		}
 		if tty {
@@ -243,7 +253,7 @@ func main() {
 			sigch := make(chan os.Signal, 1)
 			signal.Notify(sigch, os.Interrupt)
 			go func() {
-				for _ = range sigch {
+				for range sigch {
 					terminal.Restore(0, oldState)
 					os.Exit(1)
 				}
