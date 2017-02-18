@@ -15,21 +15,46 @@ import (
 	"github.com/flynn/u2f/u2ftoken"
 )
 
+// ECPublicKey is an uncompressed ECDSA public key
+type ECPublicKey [65]byte
+
+// FacetID is aka ApplicationID
+type FacetID [32]byte
+
 type Client struct {
-	FacetID [32]byte
+	FacetID FacetID
 }
 
+// NewClient will Generate a new Client from a given facet url
 func NewClient(url string) Client {
 	return Client{FacetID: sha256.Sum256([]byte(url))}
 }
 
 type KeyHandle []byte
 
-type RegisterResponse struct {
-	PublicKey [65]byte
+type SignedKeyHandle struct {
 	KeyHandle
+	PublicKey ECPublicKey
+}
+
+type RegisterResponse struct {
+	PublicKey       ECPublicKey
+	KeyHandle       KeyHandle
 	AttestationCert []byte
 	Signature       []byte
+}
+
+func (r RegisterResponse) SignedKeyHandle() SignedKeyHandle {
+	return SignedKeyHandle{KeyHandle: r.KeyHandle, PublicKey: r.PublicKey}
+}
+
+type AuthenticateResponse struct {
+	KeyHandle
+	u2ftoken.AuthenticateResponse
+}
+
+type Winker interface {
+	Wink() error
 }
 
 // ecdsa der signatures are 70,71,72 bytes, try each in turn to parse a signature
@@ -78,15 +103,6 @@ func ParseRegisterResponse(data []byte) (*RegisterResponse, error) {
 	return &r, nil
 }
 
-type AuthenticateResponse struct {
-	KeyHandle
-	u2ftoken.AuthenticateResponse
-}
-
-type Winker interface {
-	Wink() error
-}
-
 type Token struct {
 	*u2ftoken.Token
 	Winker Winker
@@ -121,11 +137,27 @@ func Tokens() []*Token {
 	return tokens
 }
 
-func (u Client) Register(ctx context.Context) (*RegisterResponse, error) {
-	u2fctx, _ := context.WithTimeout(ctx, time.Duration(30*time.Second))
-
+func getChallenge() ([]byte, error) {
 	challenge := make([]byte, 32)
-	io.ReadFull(rand.Reader, challenge)
+	n, err := io.ReadFull(rand.Reader, challenge)
+	if err != nil {
+		return nil, err
+	}
+	if n != 32 {
+		return nil, errors.New("Could not read enough random data")
+	}
+	return challenge, nil
+}
+
+func (u Client) Register(ctx context.Context) (*RegisterResponse, error) {
+	u2fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	challenge, err := getChallenge()
+	if err != nil {
+		return nil, err
+	}
+
 	req := u2ftoken.RegisterRequest{Challenge: challenge, Application: u.FacetID[:]}
 
 	c := make(chan RegisterResponse, 1)
@@ -160,10 +192,13 @@ func (u Client) Register(ctx context.Context) (*RegisterResponse, error) {
 }
 
 func (u Client) Authenticate(ctx context.Context, keyhandles []KeyHandle) (*AuthenticateResponse, error) {
-	u2fctx, _ := context.WithTimeout(ctx, time.Duration(30*time.Second))
+	u2fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 
-	challenge := make([]byte, 32)
-	io.ReadFull(rand.Reader, challenge)
+	challenge, err := getChallenge()
+	if err != nil {
+		return nil, err
+	}
 	c := make(chan AuthenticateResponse, 1)
 	for {
 		go func() {

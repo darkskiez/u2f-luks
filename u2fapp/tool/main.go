@@ -14,6 +14,7 @@ func main() {
 	ctx := context.Background()
 	app := u2fapp.NewClient("http://foobar.com")
 
+	fmt.Println("Commands: (r)egister / (a)uthenticate")
 	reader := bufio.NewReader(os.Stdin)
 
 	khs := make([]u2fapp.KeyHandle, 0)
@@ -33,7 +34,7 @@ func main() {
 			} else {
 				khs = append(khs, resp.KeyHandle)
 				fmt.Printf("%+v\n", resp)
-				fmt.Printf("Added Token %v", len(khs))
+				fmt.Printf("Added Token %v\n", len(khs))
 			}
 
 		case 'a':
