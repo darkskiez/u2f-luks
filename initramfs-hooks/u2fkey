@@ -1,0 +1,19 @@
+#!/bin/sh
+PREREQ=""
+prereqs()
+{
+     echo "$PREREQ"
+}
+
+case $1 in
+prereqs)
+     prereqs
+     exit 0
+     ;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+# Begin real processing below this line
+
+force_load usbhid
+copy_file "U2F Luks Keys" /etc/u2f-luks.keys
