@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/asn1"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -13,7 +12,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"math/big"
 	"os"
 	"os/signal"
 	"strings"
@@ -96,17 +94,12 @@ func authorize(ctx context.Context, app u2fapp.Client, aks AuthorisedKeys) (stri
 		return "", err
 	}
 
-	// TODO: move this into u2fapp
-	curve := elliptic.P256()
-	sig := struct {
-		R *big.Int
-		S *big.Int
-	}{}
-	_, err = asn1.Unmarshal(res.Signature, &sig)
+	sig, err := res.Signature.ECSignature()
 	if err != nil {
 		return "", err
 	}
 
+	// Calculate the hashsum that was signed
 	data := make([]byte, 69)
 	copy(data[:32], app.FacetID[:])
 	data[32] = 0x01
@@ -114,15 +107,17 @@ func authorize(ctx context.Context, app u2fapp.Client, aks AuthorisedKeys) (stri
 	copy(data[37:], res.AuthenticateRequest.Challenge)
 	sum := sha256.Sum256(data)
 
+	// Recover the public keys from the signature and sum
+	curve := elliptic.P256()
 	keys, err := eckr.RecoverPublicKeys(curve, sum[:], sig.R, sig.S)
 	if err != nil {
 		return "", err
 	}
 
+	// Find which key matches
 	for i := 0; i < 2; i++ {
 		dksum := sha256.Sum256(keys[i].X.Bytes())
 		if bytes.Equal(dksum[:], aks[res.KeyHandleIndex].publicKeyHash) {
-			//log.Printf("K:%x %x", keys[i].X, keys[i].Y)
 			return fmt.Sprintf("%x", keys[i].Y), nil
 		}
 	}
@@ -130,8 +125,31 @@ func authorize(ctx context.Context, app u2fapp.Client, aks AuthorisedKeys) (stri
 	return "", errors.New("Did not match any keys")
 }
 
+var oldState *terminal.State
+
+func backupTerminalState() {
+	var err error
+	oldState, err = terminal.GetState(0)
+	if err != nil {
+		panic("Could not get state of terminal: " + err.Error())
+	}
+
+	// Dont leave terminal broken on ctrl-c
+	sigch := make(chan os.Signal, 1)
+	signal.Notify(sigch, os.Interrupt)
+	go func() {
+		for sig := range sigch {
+			if sig != nil {
+				terminal.Restore(0, oldState)
+				os.Exit(1)
+			}
+		}
+	}()
+}
+
 func promptPassword() (string, error) {
 	fmt.Fprintf(os.Stderr, "Touch token or enter password:")
+	defer terminal.Restore(0, oldState)
 	password, err := terminal.ReadPassword(0)
 	return string(password), err
 }
@@ -232,6 +250,7 @@ func main() {
 	} else if len(SavedAuthorisedKeys) == 0 && !tty {
 		log.Fatalf("No keys to authenticate, prompt disabled, please enroll some keys")
 	} else {
+		backupTerminalState()
 		c := make(chan string)
 		if len(SavedAuthorisedKeys) > 0 {
 			go func() {
@@ -244,26 +263,12 @@ func main() {
 			}()
 		}
 		if tty {
-			oldState, err := terminal.GetState(0)
-			if err != nil {
-				log.Fatal("Could not get state of terminal: " + err.Error())
-			}
-			defer terminal.Restore(0, oldState)
-
-			sigch := make(chan os.Signal, 1)
-			signal.Notify(sigch, os.Interrupt)
-			go func() {
-				for range sigch {
-					terminal.Restore(0, oldState)
-					os.Exit(1)
-				}
-			}()
 			go func() {
 				pwd, _ := promptPassword()
 				c <- pwd
 			}()
 		}
 		fmt.Print(<-c)
+		terminal.Restore(0, oldState)
 	}
-
 }

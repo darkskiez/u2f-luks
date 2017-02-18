@@ -18,6 +18,19 @@ import (
 // ECPublicKey is an uncompressed ECDSA public key
 type ECPublicKey [65]byte
 
+type ECSignatureBytes []byte
+
+type ECSignature struct {
+	R *big.Int
+	S *big.Int
+}
+
+func (ec ECSignatureBytes) ECSignature() (ECSignature, error) {
+	var sig ECSignature
+	_, err := asn1.Unmarshal(ec, &sig)
+	return sig, err
+}
+
 // FacetID is aka ApplicationID
 type FacetID [32]byte
 
@@ -49,7 +62,7 @@ type RegisterResponse struct {
 	PublicKey       ECPublicKey
 	KeyHandle       KeyHandle
 	AttestationCert []byte
-	Signature       []byte
+	Signature       ECSignatureBytes
 }
 
 func (r RegisterResponse) SignedKeyHandle() SignedKeyHandle {
@@ -57,7 +70,8 @@ func (r RegisterResponse) SignedKeyHandle() SignedKeyHandle {
 }
 
 type AuthenticateResponse struct {
-	u2ftoken.AuthenticateResponse
+	Counter   uint32
+	Signature ECSignatureBytes
 	KeyHandle
 	KeyHandleIndex      int
 	AuthenticateRequest u2ftoken.AuthenticateRequest
@@ -229,10 +243,11 @@ func (u Client) Authenticate(ctx context.Context, keyhandlers []KeyHandler) (*Au
 						log.Print(err)
 					} else {
 						c <- AuthenticateResponse{
-							AuthenticateRequest:  req,
-							AuthenticateResponse: *res,
-							KeyHandle:            keyhandlers[i].KeyHandle(),
-							KeyHandleIndex:       i,
+							AuthenticateRequest: req,
+							Counter:             res.Counter,
+							Signature:           res.Signature,
+							KeyHandle:           keyhandlers[i].KeyHandle(),
+							KeyHandleIndex:      i,
 						}
 					}
 				}
