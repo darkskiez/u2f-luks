@@ -20,13 +20,11 @@ import (
 
 	"crypto/elliptic"
 
-	"github.com/darkskiez/u2f-luks/eckr"
-	"github.com/darkskiez/u2f-luks/u2fapp"
+	"github.com/darkskiez/eckr"
+	"github.com/darkskiez/u2fhost"
 )
 
 var u2fFacet string
-var keyhandle string
-var keyhash string
 var keyfile string
 var tty bool
 var enrollkey bool
@@ -37,14 +35,14 @@ type AuthorisedKey struct {
 }
 
 // KeyHandler interface
-func (a AuthorisedKey) KeyHandle() u2fapp.KeyHandle {
+func (a AuthorisedKey) KeyHandle() u2fhost.KeyHandle {
 	return a.keyHandle
 }
 
 type AuthorisedKeys []AuthorisedKey
 
-func (aks AuthorisedKeys) KeyHandlers() []u2fapp.KeyHandler {
-	khs := make([]u2fapp.KeyHandler, len(aks))
+func (aks AuthorisedKeys) KeyHandlers() []u2fhost.KeyHandler {
+	khs := make([]u2fhost.KeyHandler, len(aks))
 	for i, v := range aks {
 		khs[i] = v
 	}
@@ -56,14 +54,12 @@ var SavedAuthorisedKeys AuthorisedKeys
 func init() {
 	flag.StringVar(&u2fFacet, "app", "u2fkeystore://", "app id for u2f")
 	flag.StringVar(&keyfile, "keyfile", "/etc/u2f-luks.keys", "keyfile")
-	flag.StringVar(&keyhandle, "k", "", "key handle")
-	flag.StringVar(&keyhash, "h", "", "key hash")
 	flag.BoolVar(&verbose, "v", false, "Verbose logging")
 	flag.BoolVar(&tty, "tty", true, "Prompt for a password")
 	flag.BoolVar(&enrollkey, "enroll", false, "Enroll a key")
 }
 
-func enroll(ctx context.Context, app u2fapp.Client) (*AuthorisedKey, []byte, error) {
+func enroll(ctx context.Context, app u2fhost.Client) (*AuthorisedKey, []byte, error) {
 	log.Println("Enrolling new key, provide user presence")
 	res, err := app.Register(ctx)
 
@@ -88,7 +84,7 @@ func enroll(ctx context.Context, app u2fapp.Client) (*AuthorisedKey, []byte, err
 	return ak, pubKeyY, nil
 }
 
-func authorize(ctx context.Context, app u2fapp.Client, aks AuthorisedKeys) (string, error) {
+func authorize(ctx context.Context, app u2fhost.Client, aks AuthorisedKeys) (string, error) {
 	res, err := app.Authenticate(ctx, aks.KeyHandlers())
 	if err != nil {
 		return "", err
@@ -235,7 +231,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	app := u2fapp.NewClient(u2fFacet)
+	app := u2fhost.NewClient(u2fFacet)
 
 	if enrollkey {
 		ak, _, err := enroll(ctx, app)
