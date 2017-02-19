@@ -234,7 +234,7 @@ func main() {
 	app := u2fhost.NewClient(u2fFacet)
 
 	if enrollkey {
-		ak, _, err := enroll(ctx, app)
+		ak, k, err := enroll(ctx, app)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -243,6 +243,7 @@ func main() {
 				log.Fatal(err)
 			}
 		}
+		fmt.Printf("%x", k)
 	} else if len(SavedAuthorisedKeys) == 0 && !tty {
 		log.Fatalf("No keys to authenticate, prompt disabled, please enroll some keys")
 	} else {
