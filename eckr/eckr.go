@@ -1,6 +1,5 @@
+// Package eckr is for Elliptic Curve Public Key Recovery
 package eckr
-
-// Elliptic Curve Public Key Recovery
 
 import (
 	"crypto/ecdsa"
@@ -9,58 +8,41 @@ import (
 	"math/big"
 )
 
-func modSqrt(z *big.Int, curve *elliptic.CurveParams, a *big.Int) *big.Int {
-	p := big.NewInt(1)
-	p.Add(p, curve.P)
+func pointsFromX(curve *elliptic.CurveParams, x *big.Int) (yp, yn *big.Int) {
 
-	r := big.NewInt(1)
-
-	for i := p.BitLen() - 1; i > 1; i-- {
-		r.Mul(r, r).Mod(r, curve.P)
-		if p.Bit(i) > 0 {
-			r.Mul(r, a).Mod(r, curve.P)
-		}
-	}
-
-	z.Set(r)
-	return z
-}
-
-func PointsFromX(curve *elliptic.CurveParams, x *big.Int) (y, yn *big.Int) {
-
-	y = new(big.Int)
+	y := new(big.Int)
+	yp = new(big.Int)
 	yn = new(big.Int)
 
-	/* y = x^2 */
+	// y = x^2 - 3
 	y.Mul(x, x).Mod(y, curve.P)
-
-	/* y = x^2 - 3 */
 	y.Sub(y, big.NewInt(3)).Mod(y, curve.P)
 
-	/* y = x^3 - 3x */
+	// y = x^3 - 3x
 	y.Mul(y, x).Mod(y, curve.P)
 
-	/* y = x^3 - 3x + b */
+	// y = x^3 - 3x + b
 	y.Add(y, curve.B).Mod(y, curve.P)
 
-	modSqrt(y, curve, y)
+	yp.ModSqrt(y, curve.P)
 
-	yn.Sub(curve.P, y)
+	yn.Sub(curve.P, yn)
 
-	return y, yn
+	return yp, yn
 }
 
+// RecoverPublicKeys calculates two public keys that may have signed(r,s) the hash.
 func RecoverPublicKeys(curve elliptic.Curve, hash []byte, r, s *big.Int) ([]ecdsa.PublicKey, error) {
 	if r.Sign() <= 0 {
-		return nil, errors.New("Signature r must be postive")
+		return nil, errors.New("Signature r must be positive")
 	}
 	if s.Sign() <= 0 {
-		return nil, errors.New("Signature s must be postive")
+		return nil, errors.New("Signature s must be positive")
 	}
 
 	n := curve.Params().N
 	x := new(big.Int).Mod(r, n)
-	rp, rn := PointsFromX(curve.Params(), x)
+	rp, rn := pointsFromX(curve.Params(), x)
 
 	rinv := new(big.Int).ModInverse(r, n)
 

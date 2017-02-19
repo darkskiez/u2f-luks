@@ -22,8 +22,11 @@ func TestEckr(t *testing.T) {
 		t.Fatalf("Could not validate ecdsa signature with test data")
 	}
 
-	keys := RecoverPublicKeys(ec, sum[:], r, s)
+	keys, err := RecoverPublicKeys(ec, sum[:], r, s)
 
+	if err != nil {
+		t.Fatalf("error: ", err)
+	}
 	if keys[0].X.Cmp(x) != 0 {
 		t.Fatalf("Did not derive public key X %x != %x", keys[0].X, x)
 	}
