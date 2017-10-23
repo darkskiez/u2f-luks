@@ -30,18 +30,18 @@ var tty bool
 var enrollkey bool
 var verbose bool
 
-type AuthorisedKey struct {
+type authorisedKey struct {
 	keyHandle, publicKeyHash []byte
 }
 
 // KeyHandler interface
-func (a AuthorisedKey) KeyHandle() u2fhost.KeyHandle {
+func (a authorisedKey) KeyHandle() u2fhost.KeyHandle {
 	return a.keyHandle
 }
 
-type AuthorisedKeys []AuthorisedKey
+type authorisedKeys []authorisedKey
 
-func (aks AuthorisedKeys) KeyHandlers() []u2fhost.KeyHandler {
+func (aks authorisedKeys) KeyHandlers() []u2fhost.KeyHandler {
 	khs := make([]u2fhost.KeyHandler, len(aks))
 	for i, v := range aks {
 		khs[i] = v
@@ -49,7 +49,7 @@ func (aks AuthorisedKeys) KeyHandlers() []u2fhost.KeyHandler {
 	return khs
 }
 
-var SavedAuthorisedKeys AuthorisedKeys
+var savedAuthorisedKeys authorisedKeys
 
 func init() {
 	flag.StringVar(&u2fFacet, "app", "u2fkeystore://", "app id for u2f")
@@ -59,7 +59,7 @@ func init() {
 	flag.BoolVar(&enrollkey, "enroll", false, "Enroll a key")
 }
 
-func enroll(ctx context.Context, app u2fhost.Client) (*AuthorisedKey, []byte, error) {
+func enroll(ctx context.Context, app u2fhost.Client) (*authorisedKey, []byte, error) {
 	log.Println("Enrolling new key, provide user presence")
 	res, err := app.Register(ctx)
 
@@ -77,14 +77,14 @@ func enroll(ctx context.Context, app u2fhost.Client) (*AuthorisedKey, []byte, er
 	ksum := sha256.Sum256(pubKeyX)
 	//log.Printf("KS %x", ksum)
 
-	ak := &AuthorisedKey{
+	ak := &authorisedKey{
 		keyHandle:     res.KeyHandle,
 		publicKeyHash: ksum[:],
 	}
 	return ak, pubKeyY, nil
 }
 
-func authorize(ctx context.Context, app u2fhost.Client, aks AuthorisedKeys) (string, error) {
+func authorize(ctx context.Context, app u2fhost.Client, aks authorisedKeys) (string, error) {
 	res, err := app.Authenticate(ctx, aks.KeyHandlers())
 	if err != nil {
 		return "", err
@@ -127,7 +127,8 @@ func backupTerminalState() {
 	var err error
 	oldState, err = terminal.GetState(0)
 	if err != nil {
-		panic("Could not get state of terminal: " + err.Error())
+		log.Print("Could not get state of terminal: " + err.Error())
+		return
 	}
 
 	// Dont leave terminal broken on ctrl-c
@@ -136,28 +137,37 @@ func backupTerminalState() {
 	go func() {
 		for sig := range sigch {
 			if sig != nil {
-				terminal.Restore(0, oldState)
+				restoreTerminalState()
 				os.Exit(1)
 			}
 		}
 	}()
 }
 
+func restoreTerminalState() {
+	if oldState != nil {
+		if err := terminal.Restore(0, oldState); err != nil {
+			panic("Could not restore terminal:" + err.Error())
+		}
+	}
+}
+
 func promptPassword() (string, error) {
-	fmt.Fprintf(os.Stderr, "Touch token or enter password:")
-	defer terminal.Restore(0, oldState)
+	if _, err := fmt.Fprintf(os.Stderr, "Touch token or enter password:"); err != nil {
+		return "", err
+	}
 	password, err := terminal.ReadPassword(0)
 	return string(password), err
 }
 
-func loadKeyfile(filename string) (AuthorisedKeys, error) {
-	aks := make([]AuthorisedKey, 0, 10)
+func loadKeyfile(filename string) (authorisedKeys, error) {
+	aks := make([]authorisedKey, 0, 10)
 
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer file.Close() // nolint: errcheck
 
 	scanner := bufio.NewScanner(file)
 	i := 0
@@ -183,26 +193,28 @@ func loadKeyfile(filename string) (AuthorisedKeys, error) {
 			continue
 		}
 
-		aks = append(aks, AuthorisedKey{
+		aks = append(aks, authorisedKey{
 			keyHandle:     kh,
 			publicKeyHash: pkh,
 		})
 	}
-	if err := scanner.Err(); err != nil {
+	if err := file.Close(); err != nil {
 		return nil, err
 	}
-
-	return aks, nil
+	return aks, scanner.Err()
 }
 
-func appendKeyfile(filename string, a AuthorisedKey) error {
+func appendKeyfile(filename string, a authorisedKey) error {
 	w, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return err
 	}
-	defer w.Close()
+	defer w.Close() // nolint: errcheck
 	_, err = fmt.Fprintf(w, "%x %x\n", a.keyHandle, a.publicKeyHash)
-	return err
+	if err != nil {
+		return err
+	}
+	return w.Close()
 }
 
 func main() {
@@ -223,11 +235,11 @@ func main() {
 	if keyfile != "" {
 		log.Printf("Using keyfile: %v", keyfile)
 		var err error
-		SavedAuthorisedKeys, err = loadKeyfile(keyfile)
+		savedAuthorisedKeys, err = loadKeyfile(keyfile)
 		if err != nil {
 			log.Printf("Error loading tokens: %v", err)
 		}
-		log.Printf("Loaded %d tokens", len(SavedAuthorisedKeys))
+		log.Printf("Loaded %d tokens", len(savedAuthorisedKeys))
 	}
 
 	ctx := context.Background()
@@ -244,14 +256,14 @@ func main() {
 			}
 		}
 		fmt.Printf("%x", k)
-	} else if len(SavedAuthorisedKeys) == 0 && !tty {
+	} else if len(savedAuthorisedKeys) == 0 && !tty {
 		log.Fatalf("No keys to authenticate, prompt disabled, please enroll some keys")
 	} else {
 		backupTerminalState()
 		c := make(chan string)
-		if len(SavedAuthorisedKeys) > 0 {
+		if len(savedAuthorisedKeys) > 0 {
 			go func() {
-				pwd, err := authorize(ctx, app, SavedAuthorisedKeys)
+				pwd, err := authorize(ctx, app, savedAuthorisedKeys)
 				if err != nil {
 					log.Printf("Authorise failed: %v", err)
 				} else {
@@ -261,11 +273,15 @@ func main() {
 		}
 		if tty {
 			go func() {
-				pwd, _ := promptPassword()
-				c <- pwd
+				pwd, err := promptPassword()
+				if err != nil {
+					log.Printf("Prompt for password failed: %v", err)
+				} else {
+					c <- pwd
+				}
 			}()
 		}
 		fmt.Print(<-c)
-		terminal.Restore(0, oldState)
+		restoreTerminalState()
 	}
 }
