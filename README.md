@@ -10,7 +10,7 @@ Disclaimer: This is potentially a very silly / dangerous / risky thing to do.
 
 ## Build
 
-go build u2f-luks.go
+go build
 
 ## Install
 
