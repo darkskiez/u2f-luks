@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/aes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -24,11 +25,21 @@ import (
 	"github.com/darkskiez/u2fhost"
 )
 
-var u2fFacet string
-var keyfile string
-var tty bool
-var enrollkey bool
-var verbose bool
+var (
+	u2fFacet  string
+	keyfile   string
+	verbose   bool
+	tty       bool
+	enrollkey bool
+)
+
+func init() {
+	flag.StringVar(&u2fFacet, "app", "u2fkeystore://", "app id for u2f")
+	flag.StringVar(&keyfile, "keyfile", "/etc/u2f-luks.keys", "keyfile")
+	flag.BoolVar(&verbose, "v", false, "Verbose logging")
+	flag.BoolVar(&tty, "tty", true, "Prompt for a password")
+	flag.BoolVar(&enrollkey, "enroll", false, "Enroll a key")
+}
 
 type authorisedKey struct {
 	keyHandle, publicKeyHash []byte
@@ -51,16 +62,8 @@ func (aks authorisedKeys) KeyHandlers() []u2fhost.KeyHandler {
 
 var savedAuthorisedKeys authorisedKeys
 
-func init() {
-	flag.StringVar(&u2fFacet, "app", "u2fkeystore://", "app id for u2f")
-	flag.StringVar(&keyfile, "keyfile", "/etc/u2f-luks.keys", "keyfile")
-	flag.BoolVar(&verbose, "v", false, "Verbose logging")
-	flag.BoolVar(&tty, "tty", true, "Prompt for a password")
-	flag.BoolVar(&enrollkey, "enroll", false, "Enroll a key")
-}
-
 func enroll(ctx context.Context, app u2fhost.Client) (*authorisedKey, []byte, error) {
-	log.Println("Enrolling new key, provide user presence")
+	log.Println("Enrolling new key, provide user presence.")
 	res, err := app.Register(ctx)
 
 	if err != nil {
@@ -152,8 +155,8 @@ func restoreTerminalState() {
 	}
 }
 
-func promptPassword() (string, error) {
-	if _, err := fmt.Fprintf(os.Stderr, "Touch token or enter password:"); err != nil {
+func promptPassword(prompt string) (string, error) {
+	if _, err := fmt.Fprintf(os.Stderr, prompt); err != nil {
 		return "", err
 	}
 	password, err := terminal.ReadPassword(0)
@@ -217,6 +220,96 @@ func appendKeyfile(filename string, a authorisedKey) error {
 	return w.Close()
 }
 
+func decryptKeyHandles(password string, aks authorisedKeys) (authorisedKeys, error) {
+	ret := aks
+	h := sha256.Sum256([]byte(password))
+	cipher, err := aes.NewCipher(h[:])
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range aks {
+		cipher.Decrypt(a.keyHandle, a.keyHandle)
+		ret = append(ret, a)
+	}
+	return ret, nil
+}
+
+func enrollNewKey(ctx context.Context, app u2fhost.Client) {
+	fmt.Fprintf(os.Stderr, "Insert or tap key")
+	ak, k, err := enroll(ctx, app)
+	if err != nil {
+		log.Fatal(err)
+	}
+	pwd, err := promptPassword("Enter password (optional 2FA):")
+	fmt.Fprintf(os.Stderr, "\n")
+	if err != nil {
+		log.Fatal(err)
+	}
+	if pwd != "" {
+		log.Printf("Encrypting keydata")
+		h := sha256.Sum256([]byte(pwd))
+		cipher, err := aes.NewCipher(h[:])
+		if err != nil {
+			log.Fatal(err)
+		}
+		cipher.Encrypt(ak.keyHandle, ak.keyHandle)
+	}
+	if keyfile != "" {
+		if err := appendKeyfile(keyfile, *ak); err != nil {
+			log.Fatal(err)
+		}
+	}
+	fmt.Printf("%x", k)
+
+}
+
+func AuthoriseWithToken(ctx context.Context, app u2fhost.Client) {
+	backupTerminalState()
+	c := make(chan string)
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	authfunc := func() {
+		if len(savedAuthorisedKeys) == 0 {
+			return
+		}
+		pwd, err := authorize(cctx, app, savedAuthorisedKeys)
+		if err != nil {
+			log.Printf("Authorise failed: %v", err)
+		} else {
+			c <- pwd
+		}
+	}
+	go authfunc()
+	if tty {
+		go func() {
+			pwd, err := promptPassword("Enter password:")
+			if err != nil {
+				log.Printf("Prompt for password failed: %v", err)
+				return
+			}
+			fmt.Fprintf(os.Stderr, "\nInsert or tap U2F key (enter to cancel)\n")
+
+			savedAuthorisedKeys, err = decryptKeyHandles(pwd, savedAuthorisedKeys)
+			if err != nil {
+				// fallback on returned typed password by itself
+				c <- pwd
+				return
+			}
+
+			// restart u2f auth with new keys
+			cancel()
+			cctx, cancel = context.WithCancel(ctx)
+			go authfunc()
+
+			// accept another enter to skip u2f auth
+			bufio.NewReader(os.Stdin).ReadBytes('\n')
+			c <- pwd
+		}()
+	}
+	fmt.Print(<-c)
+	restoreTerminalState()
+}
+
 func main() {
 	flag.Parse()
 	if flag.NArg() > 1 {
@@ -237,51 +330,19 @@ func main() {
 		var err error
 		savedAuthorisedKeys, err = loadKeyfile(keyfile)
 		if err != nil {
-			log.Printf("Error loading tokens: %v", err)
+			log.Printf("Error loading keys: %v", err)
 		}
-		log.Printf("Loaded %d tokens", len(savedAuthorisedKeys))
+		log.Printf("Loaded %d keys", len(savedAuthorisedKeys))
 	}
 
 	ctx := context.Background()
 	app := u2fhost.NewClient(u2fFacet)
 
 	if enrollkey {
-		ak, k, err := enroll(ctx, app)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if keyfile != "" {
-			if err := appendKeyfile(keyfile, *ak); err != nil {
-				log.Fatal(err)
-			}
-		}
-		fmt.Printf("%x", k)
+		enrollNewKey(ctx, app)
 	} else if len(savedAuthorisedKeys) == 0 && !tty {
-		log.Fatalf("No keys to authenticate, prompt disabled, please enroll some keys")
+		log.Fatalf("No keys to authenticate, prompt disabled (enroll some U2F keys)")
 	} else {
-		backupTerminalState()
-		c := make(chan string)
-		if len(savedAuthorisedKeys) > 0 {
-			go func() {
-				pwd, err := authorize(ctx, app, savedAuthorisedKeys)
-				if err != nil {
-					log.Printf("Authorise failed: %v", err)
-				} else {
-					c <- pwd
-				}
-			}()
-		}
-		if tty {
-			go func() {
-				pwd, err := promptPassword()
-				if err != nil {
-					log.Printf("Prompt for password failed: %v", err)
-				} else {
-					c <- pwd
-				}
-			}()
-		}
-		fmt.Print(<-c)
-		restoreTerminalState()
+		AuthoriseWithToken(ctx, app)
 	}
 }

@@ -2,19 +2,34 @@
 
 Disclaimer: This is potentially a very silly / dangerous / risky thing to do.
 
-1. Enroll the token and add the key to the disk
-KEYFILE=$(mktemp)
-u2f-luks -v enroll >$KEYFILE
-cryptsetup luksAddKey /dev/sdxx $KEYFILE
-rm $KEYFILE
+## Prerequistes
 
-2. Add initramfs hook script
-cp initramfs-hooks/u2fkey /etc/initramfs-tools/hooks/
+* A configured LUKS encrypted disk.
+* A willingness to use non-audited code for your security.
+* One or more U2F Tokens
 
-3. Add keyscript setting, eg:
+## Build
+
+go build u2f-luks.go
+
+## Install
+
+sudo cp u2f-luks /usr/local/bin
+sudo cp initramfs-hooks/u2fkey /etc/initramfs-tools/hooks/
+
+## Enroll a token
+
+1. Generate a new key
+KEY=$(mktemp)
+u2f-luks -v -enroll -keyfile u2f-luks.keys >$KEY
+sudo cryptsetup luksAddKey /dev/sdxx $KEY
+sudo mv u2f-luks.keys /etc
+rm $KEY
+
+2. Add keyscript setting, eg:
 $EDITOR /etc/crypttab
 sdax_crypt UUID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx none luks,initramfs,keyscript=/usr/local/bin/u2f-luks
 
-4. Update initramfs
+3. Update initramfs
 update-initramfs -u
 
