@@ -135,6 +135,7 @@ func authorise(ctx context.Context, app u2fhost.Client) {
 			// restart u2f auth with new keys
 			cancel()
 			cctx, cancel = context.WithCancel(ctx)
+			defer cancel()
 			go authfunc()
 
 			// accept another enter to skip u2f auth

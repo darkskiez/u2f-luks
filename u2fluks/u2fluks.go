@@ -15,7 +15,7 @@ import (
 	"github.com/darkskiez/u2fhost"
 )
 
-func Enroll(ctx context.Context, app u2fhost.Client) (keydb.AuthorisedKey, []byte, error) {
+func Enroll(ctx context.Context, app u2fhost.ClientInterface) (keydb.AuthorisedKey, []byte, error) {
 	res, err := app.Register(ctx)
 	if err != nil {
 		return keydb.AuthorisedKey{}, nil, err
@@ -34,7 +34,7 @@ func Enroll(ctx context.Context, app u2fhost.Client) (keydb.AuthorisedKey, []byt
 	return ak, pubKeyY, nil
 }
 
-func Authorize(ctx context.Context, app u2fhost.Client, aks keydb.AuthorisedKeys) (string, error) {
+func Authorize(ctx context.Context, app u2fhost.ClientInterface, aks keydb.AuthorisedKeys) (string, error) {
 	res, err := app.Authenticate(ctx, aks.KeyHandlers())
 	if err != nil {
 		return "", err
@@ -47,7 +47,7 @@ func Authorize(ctx context.Context, app u2fhost.Client, aks keydb.AuthorisedKeys
 
 	// Calculate the hashsum that was signed
 	data := make([]byte, 69)
-	copy(data[:32], app.FacetID[:])
+	copy(data[:32], app.Facet())
 	data[32] = 0x01
 	binary.BigEndian.PutUint32(data[33:37], res.Counter)
 	copy(data[37:], res.AuthenticateRequest.Challenge)
