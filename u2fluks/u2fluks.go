@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
-	"fmt"
 
 	"crypto/elliptic"
 
@@ -15,10 +15,14 @@ import (
 	"github.com/darkskiez/u2fhost"
 )
 
-func Enroll(ctx context.Context, app u2fhost.ClientInterface) (keydb.AuthorisedKey, []byte, error) {
+func encodedOutput(k []byte) string {
+	return base64.StdEncoding.EncodeToString(k)
+}
+
+func Enroll(ctx context.Context, app u2fhost.ClientInterface) (keydb.AuthorisedKey, string, error) {
 	res, err := app.Register(ctx)
 	if err != nil {
-		return keydb.AuthorisedKey{}, nil, err
+		return keydb.AuthorisedKey{}, "", err
 	}
 
 	pubKeyX := res.PublicKey[1:33]
@@ -31,7 +35,7 @@ func Enroll(ctx context.Context, app u2fhost.ClientInterface) (keydb.AuthorisedK
 		U2FKeyHandle:  res.KeyHandle,
 		PublicKeyHash: ksum[:],
 	}
-	return ak, pubKeyY, nil
+	return ak, encodedOutput(pubKeyY), nil
 }
 
 func Authorize(ctx context.Context, app u2fhost.ClientInterface, aks keydb.AuthorisedKeys) (string, error) {
@@ -64,7 +68,7 @@ func Authorize(ctx context.Context, app u2fhost.ClientInterface, aks keydb.Autho
 	for i := 0; i < 2; i++ {
 		dksum := sha256.Sum256(keys[i].X.Bytes())
 		if bytes.Equal(dksum[:], aks[res.KeyHandleIndex].PublicKeyHash) {
-			return fmt.Sprintf("%x", keys[i].Y), nil
+			return encodedOutput(keys[i].Y.Bytes()), nil
 		}
 	}
 

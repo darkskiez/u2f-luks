@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"crypto/aes"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -26,27 +26,27 @@ func (a AuthorisedKey) KeyHandle() u2fhost.KeyHandle {
 }
 
 func (a AuthorisedKey) String() string {
-	return fmt.Sprintf("%x %x", a.U2FKeyHandle, a.PublicKeyHash)
+	return base64.StdEncoding.EncodeToString(a.U2FKeyHandle) + " " +
+		base64.StdEncoding.EncodeToString(a.PublicKeyHash)
 }
 
 func DecodeString(str string) (AuthorisedKey, error) {
-	var ak AuthorisedKey
 	parts := strings.Split(str, " ")
 	if len(parts) < 2 {
-		return ak, errors.New("expected two parts")
+		return AuthorisedKey{}, errors.New("expected two parts")
 	}
-	kh, err := hex.DecodeString(parts[0])
+	kh, err := base64.StdEncoding.DecodeString(parts[0])
 	if err != nil {
-		return ak, err
+		return AuthorisedKey{}, err
 	}
-	pkh, err := hex.DecodeString(parts[1])
+	pkh, err := base64.StdEncoding.DecodeString(parts[1])
 	if err != nil {
-		return ak, err
+		return AuthorisedKey{}, err
 	}
 	if len(pkh) != 32 {
-		return ak, fmt.Errorf("keyhash has wrong length (want: 32, got %v)", len(pkh))
+		return AuthorisedKey{},
+			fmt.Errorf("keyhash has wrong length (want: 32, got %v)", len(pkh))
 	}
-
 	return AuthorisedKey{
 		U2FKeyHandle:  kh,
 		PublicKeyHash: pkh,

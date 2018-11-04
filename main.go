@@ -96,7 +96,7 @@ func enroll(ctx context.Context, app u2fhost.Client) {
 			log.Fatal(err)
 		}
 	}
-	fmt.Printf("%x", k)
+	fmt.Printf("%v", k)
 }
 
 func authorise(ctx context.Context, app u2fhost.Client) {
