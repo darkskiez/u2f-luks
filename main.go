@@ -112,6 +112,7 @@ func authorise(ctx context.Context, app u2fhost.Client) {
 		if err != nil {
 			log.Printf("Authorise failed: %v", err)
 		} else {
+			fmt.Fprintf(os.Stderr, "Touch Registered\n")
 			c <- pwd
 		}
 	}
@@ -140,6 +141,7 @@ func authorise(ctx context.Context, app u2fhost.Client) {
 
 			// accept another enter to skip u2f auth
 			bufio.NewReader(os.Stdin).ReadBytes('\n')
+			fmt.Fprintf(os.Stderr, "U2F Cancelled\n")
 			c <- pwd
 		}()
 	}
@@ -152,17 +154,10 @@ func authorise(ctx context.Context, app u2fhost.Client) {
 
 func main() {
 	flag.Parse()
-	if flag.NArg() > 1 {
-		log.Fatal("Only one keyfile may be supplied as an argument")
-	}
 
 	if !verbose {
 		log.SetFlags(0)
 		log.SetOutput(ioutil.Discard)
-	}
-
-	if flag.NArg() == 1 && flag.Arg(0) != "" {
-		keyfile = flag.Arg(0)
 	}
 
 	if keyfile != "" {
