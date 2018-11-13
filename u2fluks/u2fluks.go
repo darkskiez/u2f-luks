@@ -25,17 +25,14 @@ func Enroll(ctx context.Context, app u2fhost.ClientInterface) (keydb.AuthorisedK
 		return keydb.AuthorisedKey{}, "", err
 	}
 
-	pubKeyX := res.PublicKey[1:33]
-	pubKeyY := res.PublicKey[33:65]
-
 	// smaller hash output or both keyparts?
-	ksum := sha256.Sum256(pubKeyX)
+	ksum := sha256.Sum256(res.PublicKey.X.Bytes())
 
 	ak := keydb.AuthorisedKey{
 		U2FKeyHandle:  res.KeyHandle,
 		PublicKeyHash: ksum[:],
 	}
-	return ak, encodedOutput(pubKeyY), nil
+	return ak, encodedOutput(res.PublicKey.Y.Bytes()), nil
 }
 
 func Authorize(ctx context.Context, app u2fhost.ClientInterface, aks keydb.AuthorisedKeys) (string, error) {
