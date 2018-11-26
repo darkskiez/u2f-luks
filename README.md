@@ -4,9 +4,15 @@ Disclaimer: This is potentially a very silly / dangerous / risky thing to do.
 
 ## Prerequistes
 
-* A configured LUKS encrypted disk.
-* A willingness to use non-audited code for your security.
+* A Debian variant system
+* An already configured LUKS encrypted disk
+* A willingness to use non-audited code for your security or convenience.
 * One or more U2F Tokens
+* A filesystem that can be mounted in an initramfs
+
+This does NOT yet support systemd because systemd does not support keyscripts,
+The workaround is that the initramfs parameter forces your disk to be mounted
+in the initramfs, before systemd has started.
 
 ## Build
 
