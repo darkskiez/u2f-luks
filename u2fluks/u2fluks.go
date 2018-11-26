@@ -3,7 +3,9 @@ package u2fluks
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -19,18 +21,24 @@ func encodedOutput(k []byte) string {
 	return base64.StdEncoding.EncodeToString(k)
 }
 
+// nolint
+func key2hash(salt []byte, k *ecdsa.PublicKey) []byte {
+	h := sha512.New()
+	h.Write(salt)
+	h.Write(k.X.Bytes())
+	h.Write(k.Y.Bytes())
+	return h.Sum(nil)
+}
+
 func Enroll(ctx context.Context, app u2fhost.ClientInterface) (keydb.AuthorisedKey, string, error) {
 	res, err := app.Register(ctx)
 	if err != nil {
 		return keydb.AuthorisedKey{}, "", err
 	}
 
-	// smaller hash output or both keyparts?
-	ksum := sha256.Sum256(res.PublicKey.X.Bytes())
-
 	ak := keydb.AuthorisedKey{
 		U2FKeyHandle:  res.KeyHandle,
-		PublicKeyHash: ksum[:],
+		PublicKeyHash: key2hash(res.KeyHandle, res.PublicKey),
 	}
 	return ak, encodedOutput(res.PublicKey.Y.Bytes()), nil
 }
@@ -63,7 +71,7 @@ func Authorize(ctx context.Context, app u2fhost.ClientInterface, aks keydb.Autho
 
 	// Find which key matches
 	for i := 0; i < 2; i++ {
-		dksum := sha256.Sum256(keys[i].X.Bytes())
+		dksum := key2hash(aks[res.KeyHandleIndex].KeyHandle(), &keys[i])
 		if bytes.Equal(dksum[:], aks[res.KeyHandleIndex].PublicKeyHash) {
 			return encodedOutput(keys[i].Y.Bytes()), nil
 		}
