@@ -10,7 +10,7 @@ func TestSerialization(t *testing.T) {
 		t.Error(err)
 	}
 	if ak.String() != src {
-		t.Errorf("Did not serialise back to orignal form")
+		t.Errorf("Did not serialise back to original form")
 	}
 }
 
