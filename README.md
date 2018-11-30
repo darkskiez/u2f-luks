@@ -75,7 +75,7 @@ sudo update-initramfs -u
 When prompted for your password enter the 2FA password and tap the token. If you did not
 supply a password during enroll, you can just tap the token.
 
-If this fails to unlock your disk, enter your previous disk encryption passphrase and 
+If this fails to unlock your disk, enter your previous disk encryption passphrase and
 press enter when prompted to touch your token.
 
 5. Revoke your existing passphrase

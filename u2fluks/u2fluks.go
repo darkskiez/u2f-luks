@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"io"
 
 	"crypto/elliptic"
 
@@ -16,6 +19,12 @@ import (
 	"github.com/darkskiez/u2f-luks/keydb"
 	"github.com/darkskiez/u2fhost"
 )
+
+func getChallenge() (string, error) {
+	challenge := make([]byte, 32)
+	_, err := io.ReadFull(rand.Reader, challenge)
+	return string(challenge), err
+}
 
 func encodedOutput(k []byte) string {
 	return base64.StdEncoding.EncodeToString(k)
@@ -31,7 +40,12 @@ func key2hash(salt []byte, k *ecdsa.PublicKey) []byte {
 }
 
 func Enroll(ctx context.Context, app u2fhost.ClientInterface) (keydb.AuthorisedKey, string, error) {
-	res, err := app.Register(ctx)
+	challenge, err := getChallenge()
+	if err != nil {
+		return keydb.AuthorisedKey{}, "", fmt.Errorf("Get random challenge failed: %v", err)
+	}
+
+	res, err := app.Register(ctx, challenge)
 	if err != nil {
 		return keydb.AuthorisedKey{}, "", err
 	}
@@ -44,7 +58,12 @@ func Enroll(ctx context.Context, app u2fhost.ClientInterface) (keydb.AuthorisedK
 }
 
 func Authorize(ctx context.Context, app u2fhost.ClientInterface, aks keydb.AuthorisedKeys) (string, error) {
-	res, err := app.Authenticate(ctx, aks.KeyHandlers())
+	challenge, err := getChallenge()
+	if err != nil {
+		return "", fmt.Errorf("Get random challenge failed: %v", err)
+	}
+
+	res, err := app.Authenticate(ctx, challenge, aks.KeyHandlers())
 	if err != nil {
 		return "", err
 	}
