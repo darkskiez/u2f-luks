@@ -1,0 +1,6 @@
+{ 
+	"type": "fido1",
+	"keyslots": ["0"],
+	"keyhandle":"foo",
+	"keyhash":"bar"
+}
