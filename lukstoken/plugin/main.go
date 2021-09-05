@@ -1,7 +1,7 @@
 package main
 
 // #cgo pkg-config: libcryptsetup
-// #cgo LDFLAGS: -Wl,--version-script=crypt.version
+// #cgo LDFLAGS: -Wl,--version-script=cryptsetup_token.map
 // #include <errno.h>
 // #include <stdlib.h>
 // #include <libcryptsetup.h>
@@ -13,6 +13,7 @@ import (
 	"log"
 
 	"github.com/darkskiez/u2f-luks/keydb"
+	"github.com/darkskiez/u2f-luks/lukstoken/tokenconfig"
 	"github.com/darkskiez/u2f-luks/u2fluks"
 	"github.com/darkskiez/u2fhost"
 )
@@ -109,7 +110,7 @@ func cryptsetup_token_open(cd *C.struct_crypt_device, token C.int, password **C.
 
 //export cryptsetup_token_dump
 func cryptsetup_token_dump(cd *C.struct_crypt_device, cjson *C.char) {
-	var config TokenConfig
+	var config tokenconfig.TokenConfig
 	if err := json.Unmarshal([]byte(C.GoString(cjson)), &config); err != nil {
 		C.crypt_log(cd, C.CRYPT_LOG_NORMAL, C.CString(fmt.Sprintf("Invalid JSON config:%v\n", err)))
 		return
@@ -127,7 +128,7 @@ func cryptsetup_token_dump(cd *C.struct_crypt_device, cjson *C.char) {
 //export cryptsetup_token_validate
 func cryptsetup_token_validate(cd *C.struct_crypt_device, cjson *C.char) C.int {
 	C.crypt_log(cd, C.CRYPT_LOG_NORMAL, C.CString("VALIDATE\n"))
-	var config TokenConfig
+	var config tokenconfig.TokenConfig
 	if err := json.Unmarshal([]byte(C.GoString(cjson)), &config); err != nil {
 		fmt.Printf("err:%v", err)
 		return -C.EINVAL
