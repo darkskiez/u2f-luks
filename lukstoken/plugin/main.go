@@ -41,13 +41,6 @@ func cryptsetup_token_version() *C.char {
  * @note Negative EAGAIN errno means token handler requires additional hardware
  *       not present in the system
  */
-type TokenConfig struct {
-	TokenType string   `json:"type"` // must be fido1
-	KeySlots  []string // which slot this token decrypts
-	KeyHandle string   // keyhandle that identifies token
-	KeyHash   string   // hash of key this decodes
-	IDHandle  string   // keyhandle for identification of token in 2FA mode
-}
 
 //export cryptsetup_token_open
 func cryptsetup_token_open(cd *C.struct_crypt_device, token C.int, password **C.char, password_len *C.size_t, usrptr *C.char) C.int {
@@ -62,7 +55,7 @@ func cryptsetup_token_open(cd *C.struct_crypt_device, token C.int, password **C.
 		return -cerr
 	}
 	fmt.Printf("     json:%v\n", C.GoString(cjson))
-	var config TokenConfig
+	var config tokenconfig.TokenConfig
 	if err := json.Unmarshal([]byte(C.GoString(cjson)), &config); err != nil {
 		fmt.Printf("err:%v", err)
 		return -C.EINVAL
