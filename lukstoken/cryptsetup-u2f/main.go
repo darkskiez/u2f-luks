@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"strconv"
 
 	"github.com/darkskiez/u2f-luks/lukstoken/tokenconfig"
 	"github.com/darkskiez/u2f-luks/u2fluks"
@@ -44,18 +45,16 @@ func main() {
 	app := u2fhost.NewClient(u2fFacet)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	fmt.Printf("Tap Security Key to enroll.\n")
 	keydb, passphrase, err := u2fluks.Enroll(ctx, app)
 	if err != nil {
 		fmt.Printf("Register Failed: %v\n", err)
 		return
 	}
-	config := tokenconfig.New(keydb)
-	tokenjson, err := json.Marshal(config)
-	if err != nil {
-		fmt.Printf("Json Marshal Failed: %v\n", err)
-		return
-	}
+	fmt.Printf("Touch Registered.\n")
 
+	// TODO ask for and validate existing password before preceeding.
+	password := "password"
 	/*
 		r = crypt_activate_by_passphrase(cd, NULL, CRYPT_ANY_SLOT, password, password_len, 0);
 		if (r < 0) {
@@ -64,29 +63,32 @@ func main() {
 			crypt_free(cd);
 			return r;
 		}
+
+
 	*/
 
-	_ = passphrase
-	// TODO REGISTER a keyslot
+	keyslot := C.crypt_keyslot_add_by_passphrase(cd, C.CRYPT_ANY_SLOT,
+		C.CString(password), C.ulong(len(password)),
+		C.CString(passphrase), C.ulong(len(passphrase)))
+	if keyslot < 0 {
+		fmt.Printf("keyslot add failed: errno %v\n", -keyslot)
+		return
+	}
 
-	//var keyslot C.int = C.CRYPT_ANY_SLOT
+	fmt.Printf("Registered Keyslot:%v\n", keyslot)
+	config := tokenconfig.New(keydb)
+	config.KeySlots = []string{strconv.FormatInt(int64(keyslot), 10)}
+	tokenjson, err := json.Marshal(config)
+	if err != nil {
+		fmt.Printf("Json Marshal Failed: %v\n", err)
+		return
+	}
+
 	token := C.crypt_token_json_set(cd, C.CRYPT_ANY_TOKEN, C.CString(string(tokenjson)))
 	if token < 0 {
 		fmt.Printf("crypt_token_json_set: ret %v\n", token)
 		fmt.Printf("json: %v\n", string(tokenjson))
 	}
-	/*
-			r := C.crypt_token_assign_keyslot(cd, token, keyslot)
-			if r != 0 {
-				fmt.Printf("crypt_token_assign_keyslot: ret %v\n", r)
-				return
-			}
-
-		if r != token {
-			C.crypt_token_json_set(cd, token, nil)
-			r = C.EINVAL
-		}
-
-		_ = r
-	*/
+	fmt.Printf("Registered Token:%v\n", token)
+	return
 }
