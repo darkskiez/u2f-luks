@@ -8,10 +8,8 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"os/signal"
 
-	"golang.org/x/crypto/ssh/terminal"
-
+	"github.com/darkskiez/u2f-luks/clipassword"
 	"github.com/darkskiez/u2f-luks/keydb"
 	"github.com/darkskiez/u2f-luks/u2fluks"
 	"github.com/darkskiez/u2fhost"
@@ -31,48 +29,10 @@ func init() {
 	flag.BoolVar(&verbose, "v", false, "Verbose logging")
 	flag.BoolVar(&tty, "tty", true, "Prompt for a password")
 	flag.BoolVar(&enrollkey, "enroll", false, "Enroll a key")
+	clipassword.BackupTerminalState()
 }
 
 var keys keydb.AuthorisedKeys
-
-var oldState *terminal.State
-
-func backupTerminalState() {
-	var err error
-	oldState, err = terminal.GetState(0)
-	if err != nil {
-		log.Print("Could not get state of terminal: " + err.Error())
-		return
-	}
-
-	// Dont leave terminal broken on ctrl-c
-	sigch := make(chan os.Signal, 1)
-	signal.Notify(sigch, os.Interrupt)
-	go func() {
-		for sig := range sigch {
-			if sig != nil {
-				restoreTerminalState()
-				os.Exit(1)
-			}
-		}
-	}()
-}
-
-func restoreTerminalState() {
-	if oldState != nil {
-		if err := terminal.Restore(0, oldState); err != nil {
-			panic("Could not restore terminal:" + err.Error())
-		}
-	}
-}
-
-func promptPassword(prompt string) (string, error) {
-	if _, err := fmt.Fprintf(os.Stderr, prompt); err != nil {
-		return "", err
-	}
-	password, err := terminal.ReadPassword(0)
-	return string(password), err
-}
 
 func enroll(ctx context.Context, app u2fhost.Client) {
 	fmt.Fprintf(os.Stderr, "Insert or tap key\n")
@@ -80,7 +40,7 @@ func enroll(ctx context.Context, app u2fhost.Client) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	pwd, err := promptPassword("Enter password (optional 2FA):")
+	pwd, err := clipassword.Prompt("Enter password (optional 2FA):")
 	fmt.Fprintf(os.Stderr, "\n")
 	if err != nil {
 		log.Fatal(err)
@@ -100,7 +60,7 @@ func enroll(ctx context.Context, app u2fhost.Client) {
 }
 
 func authorise(ctx context.Context, app u2fhost.Client) {
-	backupTerminalState()
+	clipassword.BackupTerminalState()
 	c := make(chan string)
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -119,7 +79,7 @@ func authorise(ctx context.Context, app u2fhost.Client) {
 	go authfunc()
 	if tty {
 		go func() {
-			pwd, err := promptPassword("Enter password:")
+			pwd, err := clipassword.Prompt("Enter password:")
 			if err != nil {
 				log.Printf("Prompt for password failed: %v", err)
 				return
@@ -149,7 +109,7 @@ func authorise(ctx context.Context, app u2fhost.Client) {
 	key := <-c
 	fmt.Fprintf(os.Stderr, "\n")
 	fmt.Print(key)
-	restoreTerminalState()
+	clipassword.RestoreTerminalState()
 }
 
 func main() {

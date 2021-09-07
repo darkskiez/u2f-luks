@@ -1,5 +1,5 @@
 { 
-	"type": "fido1",
+	"type": "u2f",
 	"keyslots": ["2"],
 	"keyhandle":"dHFGueNcbENDzPqBKNEi9w8j2CAnw+OpiX25O+KeEwMOlh8kBblDKF3pcT9tcCwy0+ERjKeomrgELxTSri69wA==",
 	"keyhash":"ieXEqwCI90vLwdis/W0vcgvW8M+6e05Az2bNcneitaBFNi7lDWLXe0XgB5BudnEWOqxFcl2JvnmifQ4NCe6xeA=="
