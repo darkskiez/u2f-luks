@@ -38,7 +38,10 @@ func main() {
 	C.setuplogcb()
 	var cd *C.struct_crypt_device
 
-	_ = C.crypt_init(&cd, C.CString(*device))
+	if r := C.crypt_init(&cd, C.CString(*device)); r < 0 {
+		fmt.Printf("crypt_init: %v\n", strerror(-r))
+		return
+	}
 	defer func() {
 		C.crypt_free(cd)
 	}()
@@ -51,7 +54,7 @@ func main() {
 	app := u2fhost.NewClient(u2fFacet)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	fmt.Printf("Tap Security Key to enroll: ")
+	fmt.Printf("Tap security key to enroll: ")
 	keydb, passphrase, err := u2fluks.Enroll(ctx, app)
 	if err != nil {
 		fmt.Printf("register failed: %v\n", err)
@@ -70,7 +73,7 @@ func main() {
 		fmt.Printf("error activating with supplied passphrase: %v\n", strerror(-r))
 		return
 	}
-	fmt.Printf("Activated.\n")
+	fmt.Printf("OK\n")
 
 	keyslot := C.crypt_keyslot_add_by_passphrase(cd, C.CRYPT_ANY_SLOT,
 		C.CString(password), C.ulong(len(password)),
@@ -80,24 +83,23 @@ func main() {
 		return
 	}
 
-	fmt.Printf("Registered Keyslot: %v\n", keyslot)
+	fmt.Printf("Registered keyslot ID %v\n", keyslot)
 	config := tokenconfig.New(keydb)
 	config.KeySlots = []string{strconv.FormatInt(int64(keyslot), 10)}
 	tokenjson, err := json.Marshal(config)
 	if err != nil {
-		fmt.Printf("Json Marshal Failed: %v\n", err)
+		fmt.Printf("JSON Marshal Failed: %v\n", err)
 		return
 	}
 
 	token := C.crypt_token_json_set(cd, C.CRYPT_ANY_TOKEN, C.CString(string(tokenjson)))
 	if token < 0 {
-		fmt.Printf("crypt_token_json_set: ret %v\n", token)
-		fmt.Printf("json: %v\n", string(tokenjson))
-		r := C.crypt_keyslot_destroy(cd, keyslot)
-		if r < 0 {
+		fmt.Printf("crypt_token_json_set failed: %v\n", strerror(-token))
+		fmt.Printf("JSON: %v\n", string(tokenjson))
+		if r := C.crypt_keyslot_destroy(cd, keyslot); r < 0 {
 			fmt.Printf("Error removing keyslot: %v\n", strerror(-r))
 		}
 	}
-	fmt.Printf("Registered Token: %v\n", token)
+	fmt.Printf("Registered token ID %v\n", token)
 	return
 }

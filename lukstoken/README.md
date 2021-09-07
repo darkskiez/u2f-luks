@@ -13,11 +13,9 @@ cp libcrypt-token-u2f.so /lib/x86_64-linux-gnu/cryptsetup/libcryptsetup-token-u2
 fallocate -l 100M testcontainer
 cryptsetup luksFormat testcontainer 
 cryptsetup token import --json-file=testfile.json testcontainer 
+cryptsetup luksDump testcontainer
 cryptsetup luksDump --dump-json-metadata testcontainer
-cryptsetup luksOpen --token-only ./testcontainer testcontainer 
+cryptsetup open --type luks --token-only ./testcontainer testcontainer
 
 dmsetup remove /dev/mapper/testcontainer 
-cryptsetup token remove --token-id=0 testcontainer 
-
-
-
+cryptsetup token remove --token-id=0 testcontainer
