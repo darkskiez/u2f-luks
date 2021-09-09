@@ -52,12 +52,6 @@ func cryptsetup_token_open_pin(cd *C.struct_crypt_device, token C.int, pin *C.ch
 		return -C.EINVAL
 	}
 	keys := keydb.AuthorisedKeys{key}
-	if config.IDHandle != "" {
-		idkey, err := keydb.DecodeString(config.IDHandle + " " + config.KeyHash)
-		if err == nil {
-			keys = append(keys, idkey)
-		}
-	}
 
 	if pinSize > 0 {
 		keys, err = keys.Decrypt(C.GoStringN(pin, C.int(pinSize)))
@@ -71,15 +65,12 @@ func cryptsetup_token_open_pin(cd *C.struct_crypt_device, token C.int, pin *C.ch
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	res, err := u2fluks.Check(ctx, app, keys)
-
+	_, err = u2fluks.Check(ctx, app, keys)
 	switch {
 	case err == u2fhost.KeyNotFoundError:
-		return -C.ENOANO // A key was inserted but didnt match, ask PIN
+		return -C.ENOANO // A key was inserted but didnt match, ask PIN incase it was encrypted
 	case err == u2fhost.NoKeysInsertedError:
-		return -C.EINVAL
-	case res == 1:
-		return -C.ENOANO // ID Key present - Ask for PIN
+		return -C.EINVAL // No keys inserted, abort.
 	}
 
 	authfunc := func() {
@@ -114,11 +105,6 @@ func cryptsetup_token_dump(cd *C.struct_crypt_device, cjson *C.char) {
 		C.crypt_log(cd, C.CRYPT_LOG_NORMAL, C.CString(fmt.Sprintf("\tInvalid JSON config:%v\n", err)))
 		return
 	}
-	if config.IDHandle == "" {
-		C.crypt_log(cd, C.CRYPT_LOG_NORMAL, C.CString("\tNo declared PIN / passphrase requirement\n"))
-	} else {
-		C.crypt_log(cd, C.CRYPT_LOG_NORMAL, C.CString("\tPIN / passphrase required\n"))
-	}
 }
 
 //export cryptsetup_token_validate
@@ -132,13 +118,6 @@ func cryptsetup_token_validate(cd *C.struct_crypt_device, cjson *C.char) C.int {
 	if err != nil {
 		C.crypt_log(cd, C.CRYPT_LOG_ERROR, C.CString(err.Error()))
 		return -C.EINVAL
-	}
-	if config.IDHandle != "" {
-		_, err := keydb.DecodeString(config.IDHandle + " " + config.KeyHash)
-		if err != nil {
-			C.crypt_log(cd, C.CRYPT_LOG_ERROR, C.CString(err.Error()))
-			return -C.EINVAL
-		}
 	}
 	C.crypt_log(cd, C.CRYPT_LOG_DEBUG, C.CString("Validated U2F Token Config.\n"))
 

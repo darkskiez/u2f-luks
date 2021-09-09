@@ -15,7 +15,6 @@ import (
 	"strconv"
 
 	"github.com/darkskiez/u2f-luks/clipassword"
-	"github.com/darkskiez/u2f-luks/keydb"
 	"github.com/darkskiez/u2f-luks/lukstoken/tokenconfig"
 	"github.com/darkskiez/u2f-luks/u2fluks"
 	"github.com/darkskiez/u2fhost"
@@ -54,7 +53,7 @@ func main() {
 	app := u2fhost.NewClient(u2fFacet)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	fmt.Printf("Tap security key to enroll: ")
+	fmt.Printf("Tap security key to enroll. ")
 	ak, passphrase, err := u2fluks.Enroll(ctx, app)
 	if err != nil {
 		fmt.Printf("register failed: %v\n", err)
@@ -62,28 +61,28 @@ func main() {
 	}
 	fmt.Printf("Touch registered.\n")
 
-	var idk keydb.AuthorisedKey
 	if *twofactor {
-		fmt.Printf("Tap security key again: ")
-		idk, _, err = u2fluks.Enroll(ctx, app)
+		twopin, err := clipassword.Prompt("Enter passphrase/PIN for two-factor: ")
+		fmt.Printf("\n")
 		if err != nil {
-			fmt.Printf("register failed: %v\n", err)
+			fmt.Printf("Reading passphrase failed: %v\n", err)
 			return
 		}
-		fmt.Printf("Touch registered.\n")
-		fmt.Printf("Before:%#v", ak)
-		if ak, err = ak.Encrypt("foobar"); err != nil {
+		if twopin == "" {
+			fmt.Printf("No passphrase entered, aborting.\n")
+			return
+		}
+		if ak, err = ak.Encrypt(twopin); err != nil {
 			fmt.Printf("Encrypting handle failed: %v\n", err)
 			return
 		}
-		fmt.Printf("After:%#v", ak)
 	}
 	password, err := clipassword.Prompt("Enter any existing passphrase: ")
-	fmt.Printf("\nActivating: ")
 	if err != nil {
 		fmt.Printf("error reading passphrase: %v\n", err)
 		return
 	}
+	fmt.Printf("\nActivating... ")
 	r := C.crypt_activate_by_passphrase(cd, nil, C.CRYPT_ANY_SLOT, C.CString(password), C.ulong(len(password)), 0)
 	if r < 0 {
 		fmt.Printf("error activating with supplied passphrase: %v\n", strerror(-r))
@@ -100,7 +99,7 @@ func main() {
 	}
 
 	fmt.Printf("Registered keyslot ID %v\n", keyslot)
-	config := tokenconfig.New(ak, idk)
+	config := tokenconfig.New(ak)
 	config.KeySlots = []string{strconv.FormatInt(int64(keyslot), 10)}
 
 	tokenjson, err := json.Marshal(config)

@@ -12,19 +12,15 @@ type TokenConfig struct {
 	KeySlots  []string `json:"keyslots"`  // which slot this token decrypts
 	KeyHandle string   `json:"keyhandle"` // keyhandle that identifies token
 	KeyHash   string   `json:"keyhash"`   // hash of key this decodes
-	IDHandle  string   `json:"idhandle"`  // keyhandle for identification of token in 2FA mode
 }
 
 // New returns a new TokenConfig for the supplied key
-func New(ak keydb.AuthorisedKey, idk keydb.AuthorisedKey) TokenConfig {
+func New(ak keydb.AuthorisedKey) TokenConfig {
 	tc := TokenConfig{
 		TokenType: "u2f",
 		KeySlots:  []string{"0"},
 		KeyHandle: base64.StdEncoding.EncodeToString(ak.U2FKeyHandle),
 		KeyHash:   base64.StdEncoding.EncodeToString(ak.PublicKeyHash),
-	}
-	if len(idk.U2FKeyHandle) > 0 {
-		tc.IDHandle = base64.StdEncoding.EncodeToString(idk.U2FKeyHandle)
 	}
 	return tc
 }
