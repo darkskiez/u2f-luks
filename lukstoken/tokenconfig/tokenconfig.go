@@ -8,20 +8,25 @@ import (
 )
 
 type TokenConfig struct {
-	TokenType string   `json:"type"` // must be fido1
-	KeySlots  []string `json:"keyslots"`// which slot this token decrypts
-	KeyHandle string   // keyhandle that identifies token
-	KeyHash   string   // hash of key this decodes
-	IDHandle  string   `json:"-"`// keyhandle for identification of token in 2FA mode
+	TokenType string   `json:"type"`      // must be u2f
+	KeySlots  []string `json:"keyslots"`  // which slot this token decrypts
+	KeyHandle string   `json:"keyhandle"` // keyhandle that identifies token
+	KeyHash   string   `json:"keyhash"`   // hash of key this decodes
+	IDHandle  string   `json:"idhandle"`  // keyhandle for identification of token in 2FA mode
 }
 
-func New(ak keydb.AuthorisedKey) TokenConfig {
-	return TokenConfig{
+// New returns a new TokenConfig for the supplied key
+func New(ak keydb.AuthorisedKey, idk keydb.AuthorisedKey) TokenConfig {
+	tc := TokenConfig{
 		TokenType: "u2f",
 		KeySlots:  []string{"0"},
 		KeyHandle: base64.StdEncoding.EncodeToString(ak.U2FKeyHandle),
 		KeyHash:   base64.StdEncoding.EncodeToString(ak.PublicKeyHash),
 	}
+	if len(idk.U2FKeyHandle) > 0 {
+		tc.IDHandle = base64.StdEncoding.EncodeToString(idk.U2FKeyHandle)
+	}
+	return tc
 }
 
 func (tc TokenConfig) AuthorisedKey() (keydb.AuthorisedKey, error) {

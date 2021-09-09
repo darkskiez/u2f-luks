@@ -20,12 +20,6 @@ import (
 var ver = C.CString("0.1")
 var u2fFacet = "u2fkeystore://"
 
-//export cryptsetup_token_open_pin
-func cryptsetup_token_open_pin(cd *C.struct_crypt_device, token C.int, pin *C.char, pinSize C.size_t, password **C.char, password_len *C.size_t, usrptr *C.char) C.int {
-	C.crypt_log(cd, C.CRYPT_LOG_ERROR, C.CString("Opening U2F token with PIN not yet supported."))
-	return -C.EINVAL
-}
-
 //export cryptsetup_token_version
 func cryptsetup_token_version() *C.char {
 	return ver
@@ -33,6 +27,11 @@ func cryptsetup_token_version() *C.char {
 
 //export cryptsetup_token_open
 func cryptsetup_token_open(cd *C.struct_crypt_device, token C.int, password **C.char, password_len *C.size_t, usrptr *C.char) C.int {
+	return cryptsetup_token_open_pin(cd, token, nil, 0, password, password_len, usrptr)
+}
+
+//export cryptsetup_token_open_pin
+func cryptsetup_token_open_pin(cd *C.struct_crypt_device, token C.int, pin *C.char, pinSize C.size_t, password **C.char, password_len *C.size_t, usrptr *C.char) C.int {
 	var cjson *C.char
 
 	/* libcryptsetup API call */
@@ -53,19 +52,34 @@ func cryptsetup_token_open(cd *C.struct_crypt_device, token C.int, password **C.
 		return -C.EINVAL
 	}
 	keys := keydb.AuthorisedKeys{key}
+	if config.IDHandle != "" {
+		idkey, err := keydb.DecodeString(config.IDHandle + " " + config.KeyHash)
+		if err == nil {
+			keys = append(keys, idkey)
+		}
+	}
+
+	if pinSize > 0 {
+		keys, err = keys.Decrypt(C.GoStringN(pin, C.int(pinSize)))
+		if err != nil {
+			return -C.EINVAL
+		}
+	}
 
 	app := u2fhost.NewClient(u2fFacet)
 	c := make(chan string)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	res, err := app.CheckAuthenticate(ctx, keys.KeyHandlers())
-	if err != nil {
-		C.crypt_log(cd, C.CRYPT_LOG_DEBUG, C.CString(fmt.Sprintf("CheckAuthenticate failed:%v\n", err)))
-		return -C.EINVAL // -C.ENOANO to ask for PIN
-	}
-	if !res {
-		return -C.EINVAL // -C.ENOANO to ask for PIN
+	res, err := u2fluks.Check(ctx, app, keys)
+
+	switch {
+	case err == u2fhost.KeyNotFoundError:
+		return -C.ENOANO // A key was inserted but didnt match, ask PIN
+	case err == u2fhost.NoKeysInsertedError:
+		return -C.EINVAL
+	case res == 1:
+		return -C.ENOANO // ID Key present - Ask for PIN
 	}
 
 	authfunc := func() {

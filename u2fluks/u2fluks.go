@@ -57,6 +57,15 @@ func Enroll(ctx context.Context, app u2fhost.ClientInterface) (keydb.AuthorisedK
 	return ak, encodedOutput(res.PublicKey.Y.Bytes()), nil
 }
 
+func Check(ctx context.Context, app u2fhost.ClientInterface, aks keydb.AuthorisedKeys) (int, error) {
+	challenge, err := getChallenge()
+	if err != nil {
+		return -1, fmt.Errorf("Get random challenge failed: %v", err)
+	}
+
+	return app.CheckAuthenticate(ctx, challenge, aks.KeyHandlers())
+}
+
 func Authorize(ctx context.Context, app u2fhost.ClientInterface, aks keydb.AuthorisedKeys) (string, error) {
 	challenge, err := getChallenge()
 	if err != nil {
