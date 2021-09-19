@@ -43,9 +43,9 @@ func DecodeString(str string) (AuthorisedKey, error) {
 	if err != nil {
 		return AuthorisedKey{}, err
 	}
-	if len(pkh) != 64 {
+	if len(pkh) > 64 || len(pkh)<2{
 		return AuthorisedKey{},
-			fmt.Errorf("keyhash has wrong length (want: 64, got %v)", len(pkh))
+			fmt.Errorf("keyhash has wrong length (want: 2 to 64, got %v)", len(pkh))
 	}
 	return AuthorisedKey{
 		U2FKeyHandle:  kh,

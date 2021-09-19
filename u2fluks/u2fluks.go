@@ -52,7 +52,7 @@ func Enroll(ctx context.Context, app u2fhost.ClientInterface) (keydb.AuthorisedK
 
 	ak := keydb.AuthorisedKey{
 		U2FKeyHandle:  res.KeyHandle,
-		PublicKeyHash: key2hash(res.KeyHandle, res.PublicKey),
+		PublicKeyHash: key2hash(res.KeyHandle, res.PublicKey)[:4],
 	}
 	return ak, encodedOutput(res.PublicKey.Y.Bytes()), nil
 }
@@ -100,7 +100,9 @@ func Authorize(ctx context.Context, app u2fhost.ClientInterface, aks keydb.Autho
 	// Find which key matches
 	for i := 0; i < 2; i++ {
 		dksum := key2hash(aks[res.KeyHandleIndex].KeyHandle(), &keys[i])
-		if bytes.Equal(dksum[:], aks[res.KeyHandleIndex].PublicKeyHash) {
+		// Support truncated key hashes
+		pkh := aks[res.KeyHandleIndex].PublicKeyHash
+		if bytes.Equal(dksum[:len(pkh)], pkh) {
 			return encodedOutput(keys[i].Y.Bytes()), nil
 		}
 	}

@@ -70,7 +70,7 @@ func cryptsetup_token_open_pin(cd *C.struct_crypt_device, token C.int, pin *C.ch
 	case err == u2fhost.KeyNotFoundError:
 		return -C.ENOANO // A key was inserted but didnt match, ask PIN incase it was encrypted
 	case err == u2fhost.NoKeysInsertedError:
-		return -C.EINVAL // No keys inserted, abort.
+		return -C.EAGAIN // No keys inserted, abort.
 	}
 
 	authfunc := func() {
@@ -91,7 +91,7 @@ func cryptsetup_token_open_pin(cd *C.struct_crypt_device, token C.int, pin *C.ch
 	go authfunc()
 	pwd := <-c
 	if pwd == "" {
-		return -C.ENOKEY
+		return -C.EAGAIN
 	}
 	*password = C.CString(pwd)
 	*password_len = C.size_t(len(pwd))

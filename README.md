@@ -2,6 +2,31 @@
 
 **Disclaimer: This is potentially a very silly / dangerous tool to use**
 
+## NEW: Now a cryptsetup external token provider using official API
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## OLD
+
 ## Prerequisites
 
 * A Debian variant system
